@@ -1,0 +1,20 @@
+[
+  {
+    "make": "Volkswagen",
+    "model": "Golf IV",
+    "year_from": 1997,
+    "year_to": 2004,
+    "engine_contains": [
+      "1.6",
+      "бенз"
+    ],
+    "part_name": "Шланг гидроусилителя руля",
+    "oem": "1J0 422 887 (family)",
+    "fitment_note": "Точный суффикс артикула нужно подтвердить по VIN/двигателю и маркировке детали.",
+    "keywords": [
+      "шланг гур",
+      "power steering hose",
+      "suction hose"
+    ]
+  }
+]

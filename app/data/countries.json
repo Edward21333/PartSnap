@@ -1,0 +1,37 @@
+[
+  {
+    "code": "LV",
+    "name": "Latvia",
+    "currency": "EUR",
+    "flag": "🇱🇻",
+    "eu": true
+  },
+  {
+    "code": "LT",
+    "name": "Lithuania",
+    "currency": "EUR",
+    "flag": "🇱🇹",
+    "eu": true
+  },
+  {
+    "code": "EE",
+    "name": "Estonia",
+    "currency": "EUR",
+    "flag": "🇪🇪",
+    "eu": true
+  },
+  {
+    "code": "DE",
+    "name": "Germany",
+    "currency": "EUR",
+    "flag": "🇩🇪",
+    "eu": true
+  },
+  {
+    "code": "PL",
+    "name": "Poland",
+    "currency": "PLN",
+    "flag": "🇵🇱",
+    "eu": true
+  }
+]

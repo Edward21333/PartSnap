@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: partsnap-mvp
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /api/health

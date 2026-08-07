@@ -1,0 +1,153 @@
+[
+  {
+    "merchant": "Trodo Demo",
+    "oem": "1J0 422 887 (family)",
+    "title": "Power steering hose aftermarket",
+    "item_price": 42.0,
+    "currency": "EUR",
+    "country": "LV",
+    "type": "Аналог",
+    "shipping_by_country": {
+      "LV": 3.0,
+      "LT": 5.0,
+      "EE": 5.0,
+      "DE": 12.0,
+      "PL": 11.0
+    },
+    "ships_to": [
+      "LV",
+      "LT",
+      "EE",
+      "DE",
+      "PL"
+    ],
+    "delivery_days": {
+      "LV": "1–2",
+      "LT": "2–3",
+      "EE": "2–3",
+      "DE": "4–6",
+      "PL": "4–6"
+    },
+    "url": "https://example.com/trodo"
+  },
+  {
+    "merchant": "PolandParts Demo",
+    "oem": "1J0 422 887 (family)",
+    "title": "Steering hose",
+    "item_price": 34.0,
+    "currency": "EUR",
+    "country": "PL",
+    "type": "Аналог",
+    "shipping_by_country": {
+      "LV": 8.0,
+      "LT": 7.0,
+      "EE": 9.0,
+      "DE": 7.0,
+      "PL": 3.0
+    },
+    "ships_to": [
+      "LV",
+      "LT",
+      "EE",
+      "DE",
+      "PL"
+    ],
+    "delivery_days": {
+      "LV": "3–5",
+      "LT": "3–5",
+      "EE": "4–6",
+      "DE": "2–4",
+      "PL": "1–2"
+    },
+    "url": "https://example.com/pl"
+  },
+  {
+    "merchant": "GermanAuto Demo",
+    "oem": "1J0 422 887 (family)",
+    "title": "OEM replacement hose",
+    "item_price": 29.0,
+    "currency": "EUR",
+    "country": "DE",
+    "type": "Аналог",
+    "shipping_by_country": {
+      "LV": 21.0,
+      "LT": 20.0,
+      "EE": 22.0,
+      "DE": 4.5,
+      "PL": 8.0
+    },
+    "ships_to": [
+      "LV",
+      "LT",
+      "EE",
+      "DE",
+      "PL"
+    ],
+    "delivery_days": {
+      "LV": "4–7",
+      "LT": "4–7",
+      "EE": "5–8",
+      "DE": "1–2",
+      "PL": "2–4"
+    },
+    "url": "https://example.com/de"
+  },
+  {
+    "merchant": "BalticOEM Demo",
+    "oem": "1J0 422 887 (family)",
+    "title": "Genuine/OEM steering hose",
+    "item_price": 79.0,
+    "currency": "EUR",
+    "country": "LT",
+    "type": "OEM",
+    "shipping_by_country": {
+      "LV": 6.0,
+      "LT": 3.0,
+      "EE": 6.0
+    },
+    "ships_to": [
+      "LV",
+      "LT",
+      "EE"
+    ],
+    "delivery_days": {
+      "LV": "2–3",
+      "LT": "1–2",
+      "EE": "2–3"
+    },
+    "url": "https://example.com/oem"
+  },
+  {
+    "merchant": "UKParts Demo",
+    "oem": "1J0 422 887 (family)",
+    "title": "Budget steering hose",
+    "item_price": 24.0,
+    "currency": "EUR",
+    "country": "GB",
+    "type": "Аналог",
+    "shipping_by_country": {
+      "LV": 18.0,
+      "LT": 18.0,
+      "EE": 19.0,
+      "DE": 16.0,
+      "PL": 16.0
+    },
+    "ships_to": [
+      "LV",
+      "LT",
+      "EE",
+      "DE",
+      "PL"
+    ],
+    "delivery_days": {
+      "LV": "5–9",
+      "LT": "5–9",
+      "EE": "6–10",
+      "DE": "4–7",
+      "PL": "4–7"
+    },
+    "import_fee_rate": 0.21,
+    "import_note": "Демо-оценка VAT/импортных расходов для отправки вне ЕС.",
+    "url": "https://example.com/uk"
+  }
+]
