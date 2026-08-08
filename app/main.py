@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.11.1")
+app = FastAPI(title="PartSnap MVP v0.12")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.11.1",
+        "version": "0.12",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -392,59 +392,99 @@ def _extract_battery_specs(text: str):
 
 def _battery_spec_match(required: dict, offered: dict):
     """
-    Returns score + status. Only compares specs that are actually known.
-    Capacity mismatch > ~12% is considered a strong mismatch for MVP ranking.
+    Compatibility score for batteries.
+    Score is 0..100 and is based ONLY on specs actually known on both sides.
+    This is not official vehicle fitment verification.
     """
-    known = 0
-    score = 0
-    reasons = []
-
     rv = _num_or_none((required or {}).get("voltage_v"))
-    ov = _num_or_none((offered or {}).get("voltage_v"))
-    if rv is not None and ov is not None:
-        known += 1
-        if abs(rv - ov) < 0.1:
-            score += 4
-            reasons.append("Voltage match")
-        else:
-            score -= 20
-            reasons.append("Voltage mismatch")
-
     rah = _num_or_none((required or {}).get("capacity_ah"))
-    oah = _num_or_none((offered or {}).get("capacity_ah"))
-    if rah is not None and oah is not None:
-        known += 1
-        diff = abs(oah - rah) / max(rah, 1)
-        if diff <= 0.06:
-            score += 8
-            reasons.append("Ah close")
-        elif diff <= 0.12:
-            score += 3
-            reasons.append("Ah plausible")
-        else:
-            score -= 12
-            reasons.append("Ah mismatch")
-
     rcca = _num_or_none((required or {}).get("cca_a"))
-    occa = _num_or_none((offered or {}).get("cca_a"))
-    if rcca is not None and occa is not None:
-        known += 1
-        # Equal/higher CCA is usually acceptable only if other physical specs match,
-        # so we rank it but do not call it verified fitment.
-        if occa >= rcca * 0.95:
-            score += 5
-            reasons.append("CCA sufficient")
-        else:
-            score -= 8
-            reasons.append("CCA low")
 
-    if known == 0:
-        return {"score": 0, "status": "unknown", "reasons": []}
-    if score < 0:
-        return {"score": score, "status": "mismatch", "reasons": reasons}
-    if score >= 10:
-        return {"score": score, "status": "strong", "reasons": reasons}
-    return {"score": score, "status": "partial", "reasons": reasons}
+    ov = _num_or_none((offered or {}).get("voltage_v"))
+    oah = _num_or_none((offered or {}).get("capacity_ah"))
+    occa = _num_or_none((offered or {}).get("cca_a"))
+
+    weighted = []
+    reasons = []
+    hard_mismatch = False
+
+    # Voltage: critical.
+    if rv is not None and ov is not None:
+        if abs(rv - ov) < 0.1:
+            weighted.append((100, 35))
+            reasons.append("Voltage совпадает")
+        else:
+            weighted.append((0, 35))
+            reasons.append("Voltage не совпадает")
+            hard_mismatch = True
+
+    # Capacity Ah: very important, but allow modest tolerance.
+    if rah is not None and oah is not None:
+        diff = abs(oah - rah) / max(rah, 1)
+        if diff <= 0.03:
+            s = 100
+            reasons.append("Ah почти точно совпадает")
+        elif diff <= 0.07:
+            s = 90
+            reasons.append("Ah близко")
+        elif diff <= 0.12:
+            s = 70
+            reasons.append("Ah допустимо близко")
+        elif diff <= 0.20:
+            s = 35
+            reasons.append("Ah заметно отличается")
+        else:
+            s = 0
+            reasons.append("Ah сильно отличается")
+            hard_mismatch = True
+        weighted.append((s, 40))
+
+    # CCA: higher is generally less concerning than materially lower.
+    if rcca is not None and occa is not None:
+        ratio = occa / max(rcca, 1)
+        if 0.95 <= ratio <= 1.25:
+            s = 100
+            reasons.append("CCA подходит")
+        elif 0.85 <= ratio < 0.95:
+            s = 65
+            reasons.append("CCA немного ниже")
+        elif ratio > 1.25:
+            s = 80
+            reasons.append("CCA выше исходного")
+        else:
+            s = 20
+            reasons.append("CCA заметно ниже")
+        weighted.append((s, 25))
+
+    if not weighted:
+        return {
+            "score": None,
+            "status": "unknown",
+            "reasons": [],
+            "known_specs": 0,
+            "hard_mismatch": False
+        }
+
+    total_weight = sum(w for _, w in weighted)
+    score = round(sum(s*w for s, w in weighted) / total_weight)
+
+    if hard_mismatch or score < 45:
+        status = "mismatch"
+    elif score >= 90:
+        status = "strong"
+    elif score >= 70:
+        status = "good"
+    else:
+        status = "partial"
+
+    return {
+        "score": score,
+        "status": status,
+        "reasons": reasons,
+        "known_specs": len(weighted),
+        "hard_mismatch": hard_mismatch
+    }
+
 
 def _extract_model_tokens(text: str):
     """
@@ -696,10 +736,12 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         if part_class == "battery":
             offered_specs = _extract_battery_specs(title)
             spec_match = _battery_spec_match(required_specs, offered_specs)
-            # If we know enough to see a clear mismatch, don't show it in the main list.
-            if spec_match["status"] == "mismatch":
+            # Only remove a clear hard mismatch. Unknown/partial results remain,
+            # but rank below better-specified offers.
+            if spec_match.get("hard_mismatch"):
                 continue
-            relevance += spec_match["score"]
+            if spec_match.get("score") is not None:
+                relevance += int(spec_match["score"] / 10)
 
         if relevance < 2:
             continue
@@ -735,8 +777,15 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
+    def fit_bucket(x):
+        sm = x.get("spec_match") or {}
+        score = sm.get("score")
+        # Known good scores first. Unknown goes after scored offers.
+        return (0, -score) if isinstance(score, (int, float)) else (1, 0)
+
     out.sort(key=lambda x: (
         0 if x.get("eu_seller") else 1,
+        *fit_bucket(x),
         rank.get(x.get("compatibility_match",""), 3),
         -x["relevance_score"],
         x["total"]
