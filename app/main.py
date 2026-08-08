@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.10.2")
+app = FastAPI(title="PartSnap MVP v0.10.3")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.10.2",
+        "version": "0.10.3",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -337,6 +337,16 @@ def _norm_words(text: str):
     import re
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) >= 2]
 
+
+def _extract_model_tokens(text: str):
+    """
+    Extract short alphanumeric model codes that matter for exact matching:
+    S4, S5, H7, AGM80, 4F0, etc.
+    """
+    import re
+    tokens = re.findall(r"\b[A-Za-z]{1,4}\d{1,4}[A-Za-z0-9-]*\b|\b\d{1,4}[A-Za-z]{1,4}\b", text or "")
+    return [t.upper() for t in tokens if len(t) >= 2]
+
 def _relevance_score(title: str, search_query: str, part_class: str):
     title_words = set(_norm_words(title))
     q_words = set(_norm_words(search_query))
@@ -364,6 +374,16 @@ def _relevance_score(title: str, search_query: str, part_class: str):
     neg = negative.get(part_class, set())
     score += sum(3 for w in pos if w in title_words)
     score -= sum(6 for w in neg if w in title_words)
+
+    query_models = _extract_model_tokens(search_query)
+    title_upper = (title or "").upper()
+    if query_models:
+        matched = [m for m in query_models if m in title_upper]
+        missing = [m for m in query_models if m not in title_upper]
+        score += 8 * len(matched)
+        # For distinctive short model names like S4, absence should strongly penalize.
+        score -= 7 * len(missing)
+
     return score
 
 
@@ -437,20 +457,25 @@ def _ebay_category_for_part(part_class: str):
         "battery": "179846",   # Batterien fürs Auto
     }.get(part_class, "")
 
-def _ebay_request(token, marketplace, country, q, category_id="", compatibility_filter="", limit=50):
+def _ebay_request(token, marketplace, country, postal, q, category_id="", compatibility_filter="", seller_countries=None, limit=50):
     import requests
     params = {"q": q, "limit": limit}
     if category_id:
         params["category_ids"] = category_id
     if compatibility_filter:
         params["compatibility_filter"] = compatibility_filter
+    if seller_countries:
+        params["filter"] = "itemLocationCountry:" + "|".join("{" + c + "}" for c in seller_countries)
 
     r = requests.get(
         "https://api.ebay.com/buy/browse/v1/item_summary/search",
         headers={
             "Authorization": f"Bearer {token}",
             "X-EBAY-C-MARKETPLACE-ID": marketplace,
-            "X-EBAY-C-ENDUSERCTX": f"contextualLocation=country%3D{country}",
+            "X-EBAY-C-ENDUSERCTX": (
+                f"contextualLocation=country%3D{country}"
+                + (f"%2Czip%3D{postal}" if postal else "")
+            ),
         },
         params=params,
         timeout=15,
@@ -458,7 +483,7 @@ def _ebay_request(token, marketplace, country, q, category_id="", compatibility_
     r.raise_for_status()
     return r.json().get("itemSummaries", [])
 
-def ebay_search(oem: str, country: str, search_query: str = "", part_class: str = "", vehicle: dict | None = None):
+def ebay_search(oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None):
     """
     Cascade search:
     1) precise category + compatibility
@@ -496,25 +521,30 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
     if engine: compat.append(f"Engine:{engine}")
     compatibility_filter = ";".join(compat) if len(compat) >= 2 else ""
 
+    eu_countries = ["DE","PL","LT","LV","EE","NL","BE","FR","IT","ES","AT","CZ","SK","SE","FI","DK"]
     attempts = []
     if precise_category and compatibility_filter:
-        attempts.append(("precise+compat", precise_category, compatibility_filter))
+        attempts.append(("precise+compat+eu", precise_category, compatibility_filter, eu_countries))
     if precise_category:
-        attempts.append(("precise", precise_category, ""))
-    attempts.append(("broad", broad_category, ""))
+        attempts.append(("precise+eu", precise_category, "", eu_countries))
+    attempts.append(("broad+eu", broad_category, "", eu_countries))
+    # Last-resort global search; these results will rank below EU offers.
+    attempts.append(("global", precise_category or broad_category, "", None))
 
     collected = {}
     attempt_log = []
 
-    for mode, category_id, compat_filter in attempts:
+    for mode, category_id, compat_filter, seller_countries in attempts:
         try:
             items = _ebay_request(
                 token=token,
                 marketplace=marketplace,
                 country=country,
+                postal=postal,
                 q=q,
                 category_id=category_id,
                 compatibility_filter=compat_filter,
+                seller_countries=seller_countries,
                 limit=50,
             )
             attempt_log.append({"mode": mode, "count": len(items)})
@@ -545,6 +575,13 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
 
         title = item.get("title", "")
         relevance = _relevance_score(title, q, part_class)
+
+        query_models = _extract_model_tokens(q)
+        title_upper = title.upper()
+        if query_models and not all(m in title_upper for m in query_models):
+            # Exact model code requested (e.g. S4) -> drop different Bosch batteries.
+            continue
+
         if relevance < 2:
             continue
 
@@ -563,6 +600,7 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
             "country":item.get("itemLocation",{}).get("country",""),
             "type":"Marketplace",
             "local":item.get("itemLocation",{}).get("country","")==country,
+            "eu_seller": item.get("itemLocation",{}).get("country","") in {"LV","LT","EE","DE","PL","NL","BE","FR","IT","ES","AT","CZ","SK","SE","FI","DK","IE","PT","GR","LU","SI","HR","HU","RO","BG"},
             "delivery_days":"—",
             "url":item.get("itemWebUrl",""),
             "image_url":image,
@@ -576,7 +614,12 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
-    out.sort(key=lambda x: (rank.get(x.get("compatibility_match",""), 3), -x["relevance_score"], x["total"]))
+    out.sort(key=lambda x: (
+        0 if x.get("eu_seller") else 1,
+        rank.get(x.get("compatibility_match",""), 3),
+        -x["relevance_score"],
+        x["total"]
+    ))
     _EBAY_DIAGNOSTICS[(country, oem, search_query, part_class)] = {
         "attempts": attempt_log,
         "query_used": q,
@@ -598,7 +641,7 @@ class EbaySource(MerchantSource):
     def enabled(self):
         return bool(os.getenv("EBAY_CLIENT_ID") and os.getenv("EBAY_CLIENT_SECRET"))
     def search(self, oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None):
-        return ebay_search(oem, country, search_query, part_class, vehicle) if self.enabled() else []
+        return ebay_search(oem, country, postal, search_query, part_class, vehicle) if self.enabled() else []
 
 class OvokoSource(MerchantSource):
     name = "ovoko"
