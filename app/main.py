@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.9.1")
+app = FastAPI(title="PartSnap MVP v0.10")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.9.1",
+        "version": "0.10",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -41,7 +41,7 @@ def demo_result(make, model, year, engine):
         "mode":"demo",
         "summary":f"Демо-анализ для {make} {model} {year} {engine}.",
         "candidates":[
-            {"name":"Шланг гидроусилителя руля","confidence":0.82,"oem_hint":"1J0 422 887 (family)","reason":"Форма похожа на магистраль ГУР; точный OEM требует каталога/VIN."},
+            {"name":"Шланг гидроусилителя руля","confidence":0.82,"oem_hint":"1J0 422 887 (family)","part_class":"hose","search_query_en":"power steering hose 1J0 422 887","reason":"Форма похожа на магистраль ГУР; точный OEM требует каталога/VIN."},
             {"name":"Обратный шланг ГУР","confidence":0.55,"oem_hint":"","reason":"Похожая категория, нужна сверка."}
         ]
     }
@@ -328,15 +328,70 @@ def ebay_access_token():
     r.raise_for_status()
     return r.json()["access_token"]
 
-def ebay_search(oem: str, country: str):
-    """Optional real source. Returns [] until EBAY credentials are configured."""
+def _norm_words(text: str):
+    import re
+    return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) >= 2]
+
+def _relevance_score(title: str, search_query: str, part_class: str):
+    title_words = set(_norm_words(title))
+    q_words = set(_norm_words(search_query))
+    score = len(title_words & q_words) * 2
+
+    positive = {
+        "battery": {"battery","batterie","akku","accu","starter"},
+        "wiper": {"wiper","wipers","blade","blades","scheibenwischer"},
+        "cv_joint": {"cv","joint","gelenk","antriebswelle","driveshaft","outer","inner"},
+        "brake": {"brake","brakes","pad","pads","disc","rotor","bremse","brems"},
+        "filter": {"filter","oilfilter","airfilter","kraftstofffilter"},
+        "lamp": {"lamp","light","headlight","taillight","scheinwerfer","leuchte"},
+        "sensor": {"sensor","geber","fühler"},
+        "hose": {"hose","schlauch","pipe","leitung"},
+    }
+    negative = {
+        "battery": {"wiper","blade","scheibenwischer","filter","lamp","bulb"},
+        "wiper": {"battery","batterie","akku","filter"},
+        "cv_joint": {"battery","batterie","wiper","blade","filter"},
+        "brake": {"battery","batterie","wiper","blade"},
+        "filter": {"battery","batterie","wiper","blade"},
+    }
+
+    pos = positive.get(part_class, set())
+    neg = negative.get(part_class, set())
+    score += sum(3 for w in pos if w in title_words)
+    score -= sum(6 for w in neg if w in title_words)
+    return score
+
+def ebay_search(oem: str, country: str, search_query: str = "", part_class: str = "", vehicle: dict | None = None):
+    """Live eBay Browse search with Motors category, optional vehicle compatibility and relevance filtering."""
     import requests
     token = ebay_access_token()
     if not token:
         return []
+
+    vehicle = vehicle or {}
     marketplace = {
         "DE":"EBAY_DE","LV":"EBAY_DE","LT":"EBAY_DE","EE":"EBAY_DE","PL":"EBAY_DE"
     }.get(country, "EBAY_DE")
+
+    q = (search_query or oem or "").strip()
+    params = {
+        "q": q,
+        "category_ids": "6030",   # eBay.de Autoteile & Zubehör
+        "limit": 50,
+    }
+
+    year = (vehicle.get("year") or "").strip()
+    make = (vehicle.get("make") or "").strip()
+    model = (vehicle.get("model") or "").strip()
+    engine = (vehicle.get("engine") or "").strip()
+    compat = []
+    if year: compat.append(f"Year:{year}")
+    if make: compat.append(f"Make:{make}")
+    if model: compat.append(f"Model:{model}")
+    if engine: compat.append(f"Engine:{engine}")
+    if len(compat) >= 2:
+        params["compatibility_filter"] = ";".join(compat)
+
     r = requests.get(
         "https://api.ebay.com/buy/browse/v1/item_summary/search",
         headers={
@@ -344,24 +399,35 @@ def ebay_search(oem: str, country: str):
             "X-EBAY-C-MARKETPLACE-ID": marketplace,
             "X-EBAY-C-ENDUSERCTX": f"contextualLocation=country%3D{country}",
         },
-        params={"q": oem, "limit": 20},
-        timeout=12,
+        params=params,
+        timeout=15,
     )
     r.raise_for_status()
-    out=[]
+
+    out = []
     for item in r.json().get("itemSummaries", []):
-        price=item.get("price",{})
-        ship=(item.get("shippingOptions") or [{}])[0].get("shippingCost",{})
+        price = item.get("price", {})
+        ship = (item.get("shippingOptions") or [{}])[0].get("shippingCost", {})
         try:
-            item_price=float(price.get("value",0))
-            shipping=float(ship.get("value",0) or 0)
-        except:
+            item_price = float(price.get("value", 0))
+            shipping = float(ship.get("value", 0) or 0)
+        except Exception:
             continue
         if price.get("currency") != "EUR":
             continue
+
+        title = item.get("title", "")
+        relevance = _relevance_score(title, q, part_class)
+        if relevance < 2:
+            continue
+
+        image = (item.get("image") or {}).get("imageUrl", "")
+        compat_match = item.get("compatibilityMatch", "")
+        compat_props = item.get("compatibilityProperties", []) or []
+
         out.append({
             "merchant":"eBay",
-            "title":item.get("title",""),
+            "title":title,
             "item_price":item_price,
             "shipping":shipping,
             "import_fee":0.0,
@@ -372,24 +438,31 @@ def ebay_search(oem: str, country: str):
             "local":item.get("itemLocation",{}).get("country","")==country,
             "delivery_days":"—",
             "url":item.get("itemWebUrl",""),
+            "image_url":image,
             "source":"ebay-live",
+            "relevance_score":relevance,
+            "compatibility_match":compat_match,
+            "compatibility_properties":compat_props,
         })
-    return out
 
+    # Prefer exact/possible compatibility, then relevance, then landed total.
+    rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
+    out.sort(key=lambda x: (rank.get(x.get("compatibility_match",""), 3), -x["relevance_score"], x["total"]))
+    return out[:20]
 
 class MerchantSource:
     name = "base"
     def enabled(self):
         return False
-    def search(self, oem: str, country: str, postal: str = ""):
+    def search(self, oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None):
         return []
 
 class EbaySource(MerchantSource):
     name = "ebay"
     def enabled(self):
         return bool(os.getenv("EBAY_CLIENT_ID") and os.getenv("EBAY_CLIENT_SECRET"))
-    def search(self, oem: str, country: str, postal: str = ""):
-        return ebay_search(oem, country) if self.enabled() else []
+    def search(self, oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None):
+        return ebay_search(oem, country, search_query, part_class, vehicle) if self.enabled() else []
 
 class OvokoSource(MerchantSource):
     name = "ovoko"
@@ -402,7 +475,7 @@ class OvokoSource(MerchantSource):
 SOURCES = [EbaySource(), OvokoSource()]
 
 @app.get("/api/offers/search")
-def offers_search(oem: str, country: str = "LV", postal: str = ""):
+def offers_search(oem: str, country: str = "LV", postal: str = "", search_query: str = "", part_class: str = "", make: str = "", model: str = "", year: str = "", engine: str = ""):
     countries = {c["code"]: c for c in load_json("countries.json")}
     if country not in countries:
         raise HTTPException(400, "Неподдерживаемая страна.")
@@ -442,7 +515,7 @@ def offers_search(oem: str, country: str = "LV", postal: str = ""):
         if not source.enabled():
             continue
         try:
-            live = source.search(oem, country, postal)
+            live = source.search(oem, country, postal, search_query, part_class, {"make":make,"model":model,"year":year,"engine":engine})
             source_status[source.name] = "ok"
             if live:
                 found.extend(live)
@@ -450,7 +523,12 @@ def offers_search(oem: str, country: str = "LV", postal: str = ""):
         except Exception:
             source_status[source.name] = "error"
 
-    found.sort(key=lambda x: (x["total"], 0 if x.get("local") else 1))
+    def global_rank(x):
+        cm = x.get("compatibility_match","")
+        cr = {"EXACT":0,"POSSIBLE":1,"":2}.get(cm,3)
+        rel = -int(x.get("relevance_score",0))
+        return (cr, rel, x["total"], 0 if x.get("local") else 1)
+    found.sort(key=global_rank)
     return {
         "destination": dest,
         "postal": postal,

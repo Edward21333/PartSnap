@@ -22,7 +22,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 .small{font-size:12px;color:var(--muted);margin-top:4px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .status{font-size:12px;padding:8px 10px;border-radius:10px;background:#101923;border:1px solid var(--line);margin-top:10px}.status.real{color:var(--green)}.status.demo{color:var(--amber)}
 .offer{padding:13px 0;border-top:1px solid var(--line)}.offer:first-child{border-top:0}
-.offerTop{display:grid;grid-template-columns:1fr auto;gap:10px}.price{font-weight:900;font-size:19px;text-align:right}.best{color:var(--green)}
+.offerTop{display:grid;grid-template-columns:72px 1fr auto;gap:10px;align-items:start}.offerImg{width:72px;height:72px;object-fit:cover;border-radius:10px;background:#0f1722;border:1px solid var(--line)}.offerTitle{font-size:13px;font-weight:750;line-height:1.35}.compatBadge{display:inline-block;font-size:10px;padding:4px 6px;border-radius:999px;background:#12311f;color:#77e2a9;margin-top:6px}.price{font-weight:900;font-size:19px;text-align:right}.best{color:var(--green)}
 .breakdown{font-size:11px;color:var(--muted);text-align:right;margin-top:3px}.merchantMeta{font-size:12px;color:var(--muted);margin-top:3px}
 .badge{display:inline-block;font-size:10px;padding:4px 6px;border-radius:999px;background:#172235;margin-right:5px;margin-top:6px}
 .loader{height:5px;background:#1e2b3d;border-radius:10px;overflow:hidden;margin-top:10px}.loader span{display:block;height:100%;width:35%;background:var(--blue);animation:a 1.1s infinite}
@@ -32,7 +32,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 .errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.9.1</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.10</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -91,7 +91,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.9.1: можно искать цены без подтверждённой совместимости, но результаты явно помечаются предупреждением.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.10: умный eBay-поиск — автомобильная категория, расширенный запрос, фильтр мусора, фото и названия товаров.</div>
 </main>
 
 <script>
@@ -153,7 +153,7 @@ $('go').onclick=async()=>{
     $('markingBox').classList.add('hidden');
   }
   const list=$('candidateList');list.innerHTML='';selectedCandidate=null;
-  (j.candidates||[]).forEach((c,i)=>{const d=document.createElement('div');d.className='candidate'+(i===0?' active':'');d.innerHTML=`<strong>${c.name}</strong><div class="small">Уверенность: ${Math.round((c.confidence||0)*100)}% · <span class="mono">${c.oem_hint||'OEM не определён'}</span></div><div class="small">${c.reason||''}</div>`;d.onclick=()=>{document.querySelectorAll('.candidate').forEach(x=>x.classList.remove('active'));d.classList.add('active');selectedCandidate=c};list.appendChild(d);if(i===0)selectedCandidate=c});
+  (j.candidates||[]).forEach((c,i)=>{const d=document.createElement('div');d.className='candidate'+(i===0?' active':'');d.innerHTML=`<strong>${c.name}</strong><div class="small">Уверенность: ${Math.round((c.confidence||0)*100)}% · <span class="mono">${c.oem_hint||'OEM не определён'}</span></div><div class="small">${c.reason||''}</div>${c.search_query_en?'<div class="small">Поиск: '+c.search_query_en+'</div>':''}`;d.onclick=()=>{document.querySelectorAll('.candidate').forEach(x=>x.classList.remove('active'));d.classList.add('active');selectedCandidate=c};list.appendChild(d);if(i===0)selectedCandidate=c});
   $('result').classList.remove('hidden');$('result').scrollIntoView({behavior:'smooth'});
  }catch(e){if($('errorBox')){$('errorBox').textContent=e.message;$('errorBox').classList.remove('hidden');$('errorBox').scrollIntoView({behavior:'smooth'});}}finally{$('loading').classList.add('hidden')}
 };
@@ -211,14 +211,25 @@ $('offersBtn').onclick=async()=>{
    $('fitmentWarning').innerHTML='<b>⚠ Совместимость не подтверждена</b><div>Эти товары найдены по маркировке/артикулу, но PartSnap пока не подтвердил, что они подходят именно к твоему автомобилю. Перед покупкой обязательно проверь применимость.</div>';
  }else{
    $('fitmentWarning').classList.add('hidden');
- } const url='/api/offers/search?oem='+encodeURIComponent(searchOem)+'&country='+encodeURIComponent(country)+'&postal='+encodeURIComponent(postal);
+ } const q=(selectedCandidate?.search_query_en||selectedCandidate?.name||searchOem).trim();
+ const pc=(selectedCandidate?.part_class||'other').trim();
+ const url='/api/offers/search?oem='+encodeURIComponent(searchOem)
+   +'&country='+encodeURIComponent(country)
+   +'&postal='+encodeURIComponent(postal)
+   +'&search_query='+encodeURIComponent(q)
+   +'&part_class='+encodeURIComponent(pc)
+   +'&make='+encodeURIComponent($('make').value)
+   +'&model='+encodeURIComponent($('model').value)
+   +'&year='+encodeURIComponent($('year').value)
+   +'&engine='+encodeURIComponent($('engine').value);
  const r=await fetch(url);const j=await r.json();
  $('chosen').textContent=`${selectedMatch.part_name} · ${selectedMatch.oem} · доставка в ${j.destination.name}`;
  const list=$('offersList');list.innerHTML='';
  (j.offers||[]).forEach((o,i)=>{
    const d=document.createElement('div');d.className='offer';
    const importText=o.import_fee>0?` + импорт €${o.import_fee.toFixed(2)}`:'';
-   d.innerHTML=`<div class="offerTop"><div><b>${o.merchant}</b><div class="merchantMeta">${o.country} · ${o.type} · доставка ${o.delivery_days} дн.</div><span class="badge">${o.local?'локальный':'из-за границы'}</span>${o.import_fee>0?'<span class="badge">импорт</span>':''}</div><div><div class="price ${i===0?'best':''}">€${o.total.toFixed(2)}</div><div class="breakdown">товар €${o.item_price.toFixed(2)} + доставка €${o.shipping.toFixed(2)}${importText}</div></div></div>`;
+   const compatTxt=o.compatibility_match==='EXACT'?'✓ Совместимость: точное совпадение':(o.compatibility_match==='POSSIBLE'?'~ Совместимость: возможно':'');
+   d.innerHTML=`<div class="offerTop">${o.image_url?'<img class="offerImg" src="'+o.image_url+'" alt="">':'<div class="offerImg"></div>'}<div><div class="offerTitle">${o.title||o.merchant}</div><div class="merchantMeta">${o.merchant} · ${o.country} · ${o.type}</div><span class="badge">${o.local?'локальный':'из-за границы'}</span>${o.import_fee>0?'<span class="badge">импорт</span>':''}${compatTxt?'<span class="compatBadge">'+compatTxt+'</span>':''}</div><div><div class="price ${i===0?'best':''}">€${o.total.toFixed(2)}</div><div class="breakdown">товар €${o.item_price.toFixed(2)} + доставка €${o.shipping.toFixed(2)}${importText}</div></div></div>`;
    if(o.url){const a=document.createElement('a');a.className='buyLink';a.href=o.url;a.target='_blank';a.rel='noopener';a.textContent='Открыть у продавца →';d.appendChild(a);}
    list.appendChild(d);
  });
