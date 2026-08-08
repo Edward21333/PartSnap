@@ -29,7 +29,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 @keyframes a{from{transform:translateX(-100%)}to{transform:translateX(330%)}}
 .kpi{display:flex;gap:8px;margin-top:10px}.kpi>div{flex:1;background:#0f1722;border:1px solid var(--line);border-radius:12px;padding:10px}
 .kpi b{display:block;font-size:16px}.kpi span{font-size:11px;color:var(--muted)}
-.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
+.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
 <header><h1>PartSnap</h1><div class="pill">MVP v0.6</div></header>
@@ -105,15 +105,15 @@ health();
 function vehicleForm(fd){fd.append('make',$('make').value);fd.append('model',$('model').value);fd.append('year',$('year').value);fd.append('engine',$('engine').value);fd.append('vin',$('vin').value)}
 
 $('go').onclick=async()=>{
- $('result').classList.add('hidden');$('catalog').classList.add('hidden');$('offersCard').classList.add('hidden');
+ $('errorBox')?.classList.add('hidden');$('result').classList.add('hidden');$('catalog').classList.add('hidden');$('offersCard').classList.add('hidden');
  $('loadingText').textContent='Анализируем фото…';$('loading').classList.remove('hidden');
  const fd=new FormData();if(selectedFile)fd.append('image',selectedFile);vehicleForm(fd);
  try{
-  const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw new Error(j.detail||'Ошибка');
+  const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(!r.ok){throw new Error(j?.error?.message||j?.detail||'Не удалось выполнить анализ');}
   $('summary').textContent=j.summary||'';const list=$('candidateList');list.innerHTML='';selectedCandidate=null;
-  (j.candidates||[]).forEach((c,i)=>{const d=document.createElement('div');d.className='candidate'+(i===0?' active':'');d.innerHTML=`<strong>${c.name}</strong><div class="small">Уверенность: ${Math.round((c.confidence||0)*100)}% · <span class="mono">${c.oem_hint||'OEM не определён'}</span></div><div class="small">${c.reason||''}</div>`;d.onclick=()=>{document.querySelectorAll('.candidate').forEach(x=>x.classList.remove('active'));d.classList.add('active');selectedCandidate=c};list.appendChild(d);if(i===0)selectedCandidate=c});
+  (j.candidates||[]).forEach((c,i)=>{const d=document.createElement('div');d.className='candidate'+(i===0?' active':'');d.innerHTML=`<strong>${c.name}</strong><div class="small">Уверенность: ${Math.round((c.confidence||0)*100)}% · <span class="mono">${c.oem_hint||'OEM не определён'}</span></div><div class="small">${c.reason||''}</div>`;d.onclick=()=>{document.querySelectorAll('.candidate').forEach(x=>x.classList.remove('active'));d.classList.add('active');selectedCandidate=c};if(o.url){const a=document.createElement('a');a.className='buyLink';a.href=o.url;a.target='_blank';a.rel='noopener';a.textContent='Открыть у продавца →';d.appendChild(a);}list.appendChild(d);if(i===0)selectedCandidate=c});
   $('result').classList.remove('hidden');$('result').scrollIntoView({behavior:'smooth'});
- }finally{$('loading').classList.add('hidden')}
+ }catch(e){if($('errorBox')){$('errorBox').textContent=e.message;$('errorBox').classList.remove('hidden');$('errorBox').scrollIntoView({behavior:'smooth'});}}finally{$('loading').classList.add('hidden')}
 };
 
 $('catalogBtn').onclick=async()=>{

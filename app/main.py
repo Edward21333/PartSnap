@@ -9,7 +9,15 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.5")
+app = FastAPI(title="PartSnap MVP v0.7")
+
+def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=status,
+        content={"ok": False, "error": {"code": code, "message": message, "retryable": retryable}}
+    )
+
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 def load_json(name):
@@ -61,13 +69,32 @@ async def analyze(
 {{"summary":"...","candidates":[{{"name":"...","confidence":0.0,"oem_hint":"...","reason":"..."}}]}}
 Максимум 3 кандидата.
 """
-    resp = client.responses.create(model=model_name,input=[{"role":"user","content":[{"type":"input_text","text":prompt},{"type":"input_image","image_url":data_url}]}])
+    try:
+        resp = client.responses.create(
+            model=model_name,
+            input=[{"role":"user","content":[
+                {"type":"input_text","text":prompt},
+                {"type":"input_image","image_url":data_url}
+            ]}]
+        )
+    except Exception as e:
+        msg = str(e)
+        low = msg.lower()
+        if "429" in msg or "credit_balance_exhausted" in low or "insufficient_quota" in low:
+            return api_error("AI_CREDITS", "Лимит AI временно исчерпан. Попробуйте позже.", False, 503)
+        if "401" in msg or "authentication" in low or "api key" in low:
+            return api_error("AI_AUTH", "Сервис распознавания временно недоступен.", False, 503)
+        if "timeout" in low:
+            return api_error("AI_TIMEOUT", "Распознавание заняло слишком много времени. Попробуйте ещё раз.", True, 504)
+        return api_error("AI_ERROR", "Не удалось распознать деталь. Попробуйте другое фото.", True, 502)
+
     text = re.sub(r"^```json\s*|\s*```$", "", resp.output_text.strip(), flags=re.I|re.S).strip()
     try:
         parsed = json.loads(text)
     except Exception:
-        raise HTTPException(502, "AI вернул невалидный JSON.")
+        return api_error("AI_PARSE", "Не удалось обработать ответ распознавания.", True, 502)
     parsed["mode"]="ai"
+    parsed["ok"]=True
     return parsed
 
 @app.post("/api/catalog/match")
@@ -161,6 +188,31 @@ def ebay_search(oem: str, country: str):
         })
     return out
 
+
+class MerchantSource:
+    name = "base"
+    def enabled(self):
+        return False
+    def search(self, oem: str, country: str, postal: str = ""):
+        return []
+
+class EbaySource(MerchantSource):
+    name = "ebay"
+    def enabled(self):
+        return bool(os.getenv("EBAY_CLIENT_ID") and os.getenv("EBAY_CLIENT_SECRET"))
+    def search(self, oem: str, country: str, postal: str = ""):
+        return ebay_search(oem, country) if self.enabled() else []
+
+class OvokoSource(MerchantSource):
+    name = "ovoko"
+    def enabled(self):
+        return bool(os.getenv("OVOKO_API_KEY"))
+    def search(self, oem: str, country: str, postal: str = ""):
+        # Will be implemented only after official Ovoko/RRR API access is granted.
+        return []
+
+SOURCES = [EbaySource(), OvokoSource()]
+
 @app.get("/api/offers/search")
 def offers_search(oem: str, country: str = "LV", postal: str = ""):
     countries = {c["code"]: c for c in load_json("countries.json")}
@@ -196,14 +248,19 @@ def offers_search(oem: str, country: str = "LV", postal: str = ""):
             "delivery_days": o.get("delivery_days", {}).get(country, "—")
         })
     live_sources = []
-    try:
-        live = ebay_search(oem, country)
-        if live:
-            found.extend(live)
-            live_sources.append("ebay")
-    except Exception as e:
-        # MVP must still work if a live merchant is temporarily unavailable.
-        live_sources.append("ebay-error")
+    source_status = {}
+    for source in SOURCES:
+        source_status[source.name] = "disabled"
+        if not source.enabled():
+            continue
+        try:
+            live = source.search(oem, country, postal)
+            source_status[source.name] = "ok"
+            if live:
+                found.extend(live)
+                live_sources.append(source.name)
+        except Exception:
+            source_status[source.name] = "error"
 
     found.sort(key=lambda x: (x["total"], 0 if x.get("local") else 1))
     return {
@@ -212,5 +269,5 @@ def offers_search(oem: str, country: str = "LV", postal: str = ""):
         "offers": found,
         "sort": "landed_total",
         "live_sources": live_sources,
-        "ebay_configured": bool(os.getenv("EBAY_CLIENT_ID") and os.getenv("EBAY_CLIENT_SECRET"))
+        "source_status": source_status
     }
