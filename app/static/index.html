@@ -32,7 +32,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 .errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.10</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.10.1</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -91,7 +91,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.10: умный eBay-поиск — автомобильная категория, расширенный запрос, фильтр мусора, фото и названия товаров.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.10.1: каскадный eBay-поиск — точная категория → без compatibility → широкая категория → фильтр мусора.</div>
 </main>
 
 <script>
@@ -237,10 +237,13 @@ $('offersBtn').onclick=async()=>{
  if((j.offers||[]).length===0 && j.source_status){
    const s=j.source_status;
    const parts=[];
-   if(s.ebay==='ok') parts.push('eBay подключён, но результатов по этому запросу нет.');
+   if(s.ebay==='ok') parts.push('eBay подключён, но после каскадного поиска подходящих результатов не осталось.');
    if(s.ebay==='error') parts.push('eBay API вернул ошибку — смотри Render Logs.');
    if(s.ebay==='disabled') parts.push('eBay API не подключён в Environment.');
    if(s.ovoko==='disabled') parts.push('Ovoko/RRR пока не подключён.');
+   if(j.search_attempts?.length){
+      parts.push('Попытки: '+j.search_attempts.map(x=>x.mode+'='+x.count).join(', ')+'.');
+   }
    if(parts.length){
       $('offersList').innerHTML='<div class="compat warn"><b>Источники</b><div>'+parts.join(' ')+'</div></div>';
    }

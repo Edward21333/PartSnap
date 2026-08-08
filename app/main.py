@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.10")
+app = FastAPI(title="PartSnap MVP v0.10.1")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.10",
+        "version": "0.10.1",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -361,36 +361,19 @@ def _relevance_score(title: str, search_query: str, part_class: str):
     score -= sum(6 for w in neg if w in title_words)
     return score
 
-def ebay_search(oem: str, country: str, search_query: str = "", part_class: str = "", vehicle: dict | None = None):
-    """Live eBay Browse search with Motors category, optional vehicle compatibility and relevance filtering."""
+def _ebay_category_for_part(part_class: str):
+    # eBay.de category IDs. Keep conservative: only map categories we have tested.
+    return {
+        "battery": "179846",   # Batterien fürs Auto
+    }.get(part_class, "")
+
+def _ebay_request(token, marketplace, country, q, category_id="", compatibility_filter="", limit=50):
     import requests
-    token = ebay_access_token()
-    if not token:
-        return []
-
-    vehicle = vehicle or {}
-    marketplace = {
-        "DE":"EBAY_DE","LV":"EBAY_DE","LT":"EBAY_DE","EE":"EBAY_DE","PL":"EBAY_DE"
-    }.get(country, "EBAY_DE")
-
-    q = (search_query or oem or "").strip()
-    params = {
-        "q": q,
-        "category_ids": "6030",   # eBay.de Autoteile & Zubehör
-        "limit": 50,
-    }
-
-    year = (vehicle.get("year") or "").strip()
-    make = (vehicle.get("make") or "").strip()
-    model = (vehicle.get("model") or "").strip()
-    engine = (vehicle.get("engine") or "").strip()
-    compat = []
-    if year: compat.append(f"Year:{year}")
-    if make: compat.append(f"Make:{make}")
-    if model: compat.append(f"Model:{model}")
-    if engine: compat.append(f"Engine:{engine}")
-    if len(compat) >= 2:
-        params["compatibility_filter"] = ";".join(compat)
+    params = {"q": q, "limit": limit}
+    if category_id:
+        params["category_ids"] = category_id
+    if compatibility_filter:
+        params["compatibility_filter"] = compatibility_filter
 
     r = requests.get(
         "https://api.ebay.com/buy/browse/v1/item_summary/search",
@@ -403,9 +386,78 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
         timeout=15,
     )
     r.raise_for_status()
+    return r.json().get("itemSummaries", [])
+
+def ebay_search(oem: str, country: str, search_query: str = "", part_class: str = "", vehicle: dict | None = None):
+    """
+    Cascade search:
+    1) precise category + compatibility
+    2) precise category without compatibility
+    3) broad automotive category without compatibility
+    4) relevance filter removes obvious junk
+    """
+    token = ebay_access_token()
+    if not token:
+        return []
+
+    vehicle = vehicle or {}
+    marketplace = {
+        "DE":"EBAY_DE","LV":"EBAY_DE","LT":"EBAY_DE","EE":"EBAY_DE","PL":"EBAY_DE"
+    }.get(country, "EBAY_DE")
+
+    q = (search_query or oem or "").strip()
+    precise_category = _ebay_category_for_part(part_class)
+    broad_category = "6030"
+
+    year = (vehicle.get("year") or "").strip()
+    make = (vehicle.get("make") or "").strip()
+    model = (vehicle.get("model") or "").strip()
+    engine = (vehicle.get("engine") or "").strip()
+
+    compat = []
+    if year: compat.append(f"Year:{year}")
+    if make: compat.append(f"Make:{make}")
+    if model: compat.append(f"Model:{model}")
+    if engine: compat.append(f"Engine:{engine}")
+    compatibility_filter = ";".join(compat) if len(compat) >= 2 else ""
+
+    attempts = []
+    if precise_category and compatibility_filter:
+        attempts.append(("precise+compat", precise_category, compatibility_filter))
+    if precise_category:
+        attempts.append(("precise", precise_category, ""))
+    attempts.append(("broad", broad_category, ""))
+
+    collected = {}
+    attempt_log = []
+
+    for mode, category_id, compat_filter in attempts:
+        try:
+            items = _ebay_request(
+                token=token,
+                marketplace=marketplace,
+                country=country,
+                q=q,
+                category_id=category_id,
+                compatibility_filter=compat_filter,
+                limit=50,
+            )
+            attempt_log.append({"mode": mode, "count": len(items)})
+        except Exception:
+            attempt_log.append({"mode": mode, "count": 0, "error": True})
+            continue
+
+        for item in items:
+            iid = item.get("itemId") or item.get("legacyItemId") or item.get("itemWebUrl") or item.get("title")
+            if iid and iid not in collected:
+                collected[iid] = item
+
+        # If precise search already yields enough candidates, don't broaden immediately.
+        if mode.startswith("precise") and len(collected) >= 10:
+            break
 
     out = []
-    for item in r.json().get("itemSummaries", []):
+    for item in collected.values():
         price = item.get("price", {})
         ship = (item.get("shippingOptions") or [{}])[0].get("shippingCost", {})
         try:
@@ -443,9 +495,9 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
             "relevance_score":relevance,
             "compatibility_match":compat_match,
             "compatibility_properties":compat_props,
+            "search_attempts": attempt_log,
         })
 
-    # Prefer exact/possible compatibility, then relevance, then landed total.
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
     out.sort(key=lambda x: (rank.get(x.get("compatibility_match",""), 3), -x["relevance_score"], x["total"]))
     return out[:20]
@@ -535,5 +587,6 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         "offers": found,
         "sort": "landed_total",
         "live_sources": live_sources,
-        "source_status": source_status
+        "source_status": source_status,
+        "search_attempts": next((x.get("search_attempts", []) for x in found if x.get("source")=="ebay-live"), [])
     }
