@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.8")
+app = FastAPI(title="PartSnap MVP v0.9")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.8",
+        "version": "0.9",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -117,6 +117,77 @@ async def analyze(
     return parsed
 
 
+
+@app.get("/api/vin/decode")
+def decode_vin(vin: str):
+    """
+    Lightweight VIN helper using NHTSA vPIC as a public decoder.
+    It helps prefill vehicle identity, but it is NOT a parts-fitment catalogue.
+    """
+    import requests
+    vin = (vin or "").strip().upper()
+    if len(vin) != 17:
+        return api_error("VIN_LENGTH", "VIN должен содержать 17 символов.", False, 400)
+
+    try:
+        r = requests.get(
+            f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended/{vin}",
+            params={"format": "json"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        rows = r.json().get("Results", [])
+        row = rows[0] if rows else {}
+    except Exception:
+        return api_error("VIN_SERVICE", "Не удалось проверить VIN. Введите данные автомобиля вручную.", True, 502)
+
+    make = (row.get("Make") or "").strip()
+    model = (row.get("Model") or "").strip()
+    year = (row.get("ModelYear") or "").strip()
+    displacement = (row.get("DisplacementL") or "").strip()
+    fuel = (row.get("FuelTypePrimary") or "").strip()
+    engine = " ".join([x for x in [displacement + "L" if displacement else "", fuel] if x]).strip()
+
+    decoded = bool(make or model or year)
+    return {
+        "ok": True,
+        "decoded": decoded,
+        "vin": vin,
+        "vehicle": {
+            "make": make,
+            "model": model,
+            "year": year,
+            "engine": engine,
+        },
+        "message": "VIN распознан." if decoded else "VIN принят, но публичный декодер не вернул достаточно данных. Заполните автомобиль вручную."
+    }
+
+
+class FitmentResolver:
+    name = "base"
+    def enabled(self):
+        return False
+    def resolve(self, vehicle: dict, part_name: str, identifier: str):
+        return None
+
+class TecDocResolver(FitmentResolver):
+    name = "tecdoc"
+    def enabled(self):
+        return bool(os.getenv("TECDOC_API_KEY") and os.getenv("TECDOC_API_URL"))
+    def resolve(self, vehicle: dict, part_name: str, identifier: str):
+        # Intentionally not implemented until official API credentials/schema are supplied.
+        return None
+
+class OvokoFitmentResolver(FitmentResolver):
+    name = "ovoko"
+    def enabled(self):
+        return bool(os.getenv("OVOKO_API_KEY"))
+    def resolve(self, vehicle: dict, part_name: str, identifier: str):
+        # Will be implemented after official partner API access.
+        return None
+
+FITMENT_RESOLVERS = [TecDocResolver(), OvokoFitmentResolver()]
+
 @app.post("/api/part/resolve")
 def resolve_part(
     make: str = Form(""),
@@ -129,59 +200,89 @@ def resolve_part(
     visible_marking: str = Form(""),
     manual_oem: str = Form("")
 ):
-    """
-    v0.8 compatibility gate.
-
-    Priority:
-    1) explicit user-entered OEM/article;
-    2) exact visible marking from image;
-    3) AI hint (not verified);
-    4) no identifier -> do not claim exact compatibility.
-    """
     def clean(v: str):
         return (v or "").strip()
+
+    vehicle = {
+        "make": clean(make),
+        "model": clean(model),
+        "year": clean(year),
+        "engine": clean(engine),
+        "vin": clean(vin).upper(),
+    }
 
     manual = clean(manual_oem)
     marking = clean(visible_marking)
     hint = clean(ai_oem_hint)
 
+    identifier = ""
+    identifier_source = "none"
     if manual:
+        identifier = manual
+        identifier_source = "manual"
+    elif marking:
+        identifier = marking
+        identifier_source = "visible_marking"
+    elif hint:
+        identifier = hint
+        identifier_source = "ai_hint"
+
+    resolver_status = {}
+    verified_result = None
+    for resolver in FITMENT_RESOLVERS:
+        resolver_status[resolver.name] = "disabled"
+        if not resolver.enabled():
+            continue
+        resolver_status[resolver.name] = "enabled"
+        try:
+            result = resolver.resolve(vehicle, part_name, identifier)
+            if result:
+                verified_result = result
+                resolver_status[resolver.name] = "resolved"
+                break
+        except Exception:
+            resolver_status[resolver.name] = "error"
+
+    if verified_result:
         return {
-            "status": "identifier_provided",
-            "verified": False,
-            "identifier": manual,
-            "identifier_source": "manual",
-            "part_name": part_name,
-            "message": "Артикул введён пользователем. Совместимость с автомобилем ещё не подтверждена внешним каталогом."
+            "status": "verified",
+            "verified": True,
+            "identifier": verified_result.get("identifier", identifier),
+            "identifier_source": verified_result.get("source", "external_catalog"),
+            "part_name": verified_result.get("part_name", part_name),
+            "message": "Совместимость подтверждена внешним каталогом.",
+            "resolver_status": resolver_status,
+            "vehicle": vehicle
         }
 
-    if marking:
+    if not identifier:
         return {
-            "status": "marking_detected",
+            "status": "unresolved",
             "verified": False,
-            "identifier": marking,
-            "identifier_source": "visible_marking",
+            "identifier": "",
+            "identifier_source": "none",
             "part_name": part_name,
-            "message": "Маркировка считана с фото. Нужна проверка по внешнему каталогу/VIN."
+            "message": "Точный OEM/артикул не найден. Сфотографируйте маркировку крупнее или введите номер вручную.",
+            "resolver_status": resolver_status,
+            "vehicle": vehicle
         }
 
-    if hint:
-        return {
-            "status": "ai_hint_only",
-            "verified": False,
-            "identifier": hint,
-            "identifier_source": "ai_hint",
-            "part_name": part_name,
-            "message": "Есть только AI-подсказка по номеру. Точная совместимость не подтверждена."
-        }
+    if identifier_source == "manual":
+        msg = "Артикул введён пользователем, но совместимость с этим автомобилем пока не подтверждена внешним каталогом."
+    elif identifier_source == "visible_marking":
+        msg = "Маркировка считана с фото, но это ещё не означает, что она является OEM. Нужна проверка по внешнему каталогу/VIN."
+    else:
+        msg = "Есть только AI-подсказка по номеру. Точная совместимость не подтверждена."
 
     return {
-        "status": "unresolved",
+        "status": "identifier_unverified",
         "verified": False,
-        "identifier": "",
-        "identifier_source": "none",
+        "identifier": identifier,
+        "identifier_source": identifier_source,
         "part_name": part_name,
-        "message": "Точный OEM/артикул не найден. Сфотографируйте маркировку крупнее или введите номер вручную."
+        "message": msg,
+        "resolver_status": resolver_status,
+        "vehicle": vehicle
     }
 
 @app.post("/api/catalog/match")
