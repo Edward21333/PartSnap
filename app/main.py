@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.10.1")
+app = FastAPI(title="PartSnap MVP v0.10.2")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.10.1",
+        "version": "0.10.2",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -82,11 +82,16 @@ async def analyze(
       "name":"...",
       "confidence":0.0,
       "oem_hint":"...",
+      "part_class":"battery|wiper|cv_joint|brake|filter|lamp|sensor|hose|other",
+      "search_query_en":"короткий поисковый запрос НА АНГЛИЙСКОМ/НЕМЕЦКОМ без лишних слов, например Bosch S4 Autobatterie",
       "reason":"..."
     }}
   ]
 }}
 Максимум 3 кандидата.
+Для аккумулятора обязательно part_class="battery".
+Для дворников part_class="wiper".
+Для ШРУСа/гранаты part_class="cv_joint".
 """
     try:
         resp = client.responses.create(
@@ -361,6 +366,71 @@ def _relevance_score(title: str, search_query: str, part_class: str):
     score -= sum(6 for w in neg if w in title_words)
     return score
 
+
+def _infer_part_class(text: str):
+    t = (text or "").lower()
+    rules = [
+        ("battery", ["аккумуля", "battery", "batterie", "starterbatterie", "akku"]),
+        ("wiper", ["дворник", "щетк", "wiper", "scheibenwischer", "wischblatt"]),
+        ("cv_joint", ["шрус", "гранат", "cv joint", "gelenk", "antriebswelle"]),
+        ("brake", ["тормоз", "колодк", "диск", "brake", "bremse", "brems"]),
+        ("filter", ["фильтр", "filter"]),
+        ("lamp", ["фара", "фонарь", "ламп", "headlight", "taillight", "scheinwerfer", "leuchte"]),
+        ("sensor", ["датчик", "sensor", "geber", "fühler"]),
+        ("hose", ["шланг", "hose", "schlauch", "leitung"]),
+    ]
+    for cls, words in rules:
+        if any(w in t for w in words):
+            return cls
+    return "other"
+
+def _build_ebay_query(oem: str, search_query: str, part_class: str):
+    """
+    Never trust the AI search fields blindly.
+    If they are missing, build a compact marketplace query from the visible marking/OEM.
+    German terms are useful because LV/LT/EE currently search EBAY_DE.
+    """
+    base = (oem or "").strip()
+    supplied = (search_query or "").strip()
+
+    # If supplied query is mostly Cyrillic or too generic, prefer our own query.
+    ascii_letters = sum(ch.isascii() and ch.isalpha() for ch in supplied)
+    non_ascii_letters = sum((not ch.isascii()) and ch.isalpha() for ch in supplied)
+    supplied_is_marketplace_friendly = bool(supplied) and ascii_letters >= non_ascii_letters and len(supplied) <= 100
+
+    suffix = {
+        "battery": "Autobatterie Starterbatterie",
+        "wiper": "Scheibenwischer Wischerblatt",
+        "cv_joint": "Gleichlaufgelenk Antriebswelle",
+        "brake": "Bremse Bremsbeläge",
+        "filter": "Autofilter",
+        "lamp": "Scheinwerfer Autolampe",
+        "sensor": "Autosensor",
+        "hose": "Autoschlauch Leitung",
+        "other": "Autoteil",
+    }.get(part_class, "Autoteil")
+
+    if supplied_is_marketplace_friendly:
+        # Still append the class term if the query is only a model/marking like "BOSCH S4".
+        low = supplied.lower()
+        class_words = {
+            "battery": ["battery","batterie","akku"],
+            "wiper": ["wiper","wischer"],
+            "cv_joint": ["cv","joint","gelenk"],
+            "brake": ["brake","brem"],
+            "filter": ["filter"],
+            "lamp": ["lamp","light","scheinwerfer"],
+            "sensor": ["sensor"],
+            "hose": ["hose","schlauch","leitung"],
+        }.get(part_class, [])
+        if class_words and not any(w in low for w in class_words):
+            return f"{supplied} {suffix}".strip()
+        return supplied
+
+    return f"{base} {suffix}".strip()
+
+_EBAY_DIAGNOSTICS = {}
+
 def _ebay_category_for_part(part_class: str):
     # eBay.de category IDs. Keep conservative: only map categories we have tested.
     return {
@@ -405,7 +475,12 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
         "DE":"EBAY_DE","LV":"EBAY_DE","LT":"EBAY_DE","EE":"EBAY_DE","PL":"EBAY_DE"
     }.get(country, "EBAY_DE")
 
-    q = (search_query or oem or "").strip()
+    inferred_class = part_class if part_class and part_class != "other" else _infer_part_class(search_query)
+    if inferred_class == "other":
+        inferred_class = _infer_part_class(oem)
+    part_class = inferred_class
+
+    q = _build_ebay_query(oem, search_query, part_class)
     precise_category = _ebay_category_for_part(part_class)
     broad_category = "6030"
 
@@ -496,10 +571,19 @@ def ebay_search(oem: str, country: str, search_query: str = "", part_class: str 
             "compatibility_match":compat_match,
             "compatibility_properties":compat_props,
             "search_attempts": attempt_log,
+            "search_query_used": q,
+            "part_class_used": part_class,
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
     out.sort(key=lambda x: (rank.get(x.get("compatibility_match",""), 3), -x["relevance_score"], x["total"]))
+    _EBAY_DIAGNOSTICS[(country, oem, search_query, part_class)] = {
+        "attempts": attempt_log,
+        "query_used": q,
+        "part_class_used": part_class,
+        "raw_unique": len(collected),
+        "after_relevance": len(out),
+    }
     return out[:20]
 
 class MerchantSource:
@@ -588,5 +672,6 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         "sort": "landed_total",
         "live_sources": live_sources,
         "source_status": source_status,
-        "search_attempts": next((x.get("search_attempts", []) for x in found if x.get("source")=="ebay-live"), [])
+        "search_attempts": next((x.get("search_attempts", []) for x in found if x.get("source")=="ebay-live"), []),
+        "ebay_diagnostics": _EBAY_DIAGNOSTICS.get((country, oem, search_query, part_class), {})
     }
