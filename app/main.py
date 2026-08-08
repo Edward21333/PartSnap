@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.11")
+app = FastAPI(title="PartSnap MVP v0.11.1")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.11",
+        "version": "0.11.1",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -84,14 +84,14 @@ async def analyze(
       "oem_hint":"...",
       "part_class":"battery|wiper|cv_joint|brake|filter|lamp|sensor|hose|other",
       "search_query_en":"короткий поисковый запрос НА АНГЛИЙСКОМ/НЕМЕЦКОМ без лишних слов, например Bosch S4 Autobatterie",
-      "specs":{
+      "specs":{{
         "voltage_v":null,
         "capacity_ah":null,
         "cca_a":null,
         "length_mm":null,
         "width_mm":null,
         "height_mm":null
-      },
+      }},
       "reason":"..."
     }}
   ]
