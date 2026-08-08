@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.10.3")
+app = FastAPI(title="PartSnap MVP v0.11")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.10.3",
+        "version": "0.11",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -84,12 +84,22 @@ async def analyze(
       "oem_hint":"...",
       "part_class":"battery|wiper|cv_joint|brake|filter|lamp|sensor|hose|other",
       "search_query_en":"короткий поисковый запрос НА АНГЛИЙСКОМ/НЕМЕЦКОМ без лишних слов, например Bosch S4 Autobatterie",
+      "specs":{
+        "voltage_v":null,
+        "capacity_ah":null,
+        "cca_a":null,
+        "length_mm":null,
+        "width_mm":null,
+        "height_mm":null
+      },
       "reason":"..."
     }}
   ]
 }}
 Максимум 3 кандидата.
 Для аккумулятора обязательно part_class="battery".
+Если на наклейке аккумулятора видны Voltage, Ah, CCA/EN или размеры — заполни specs.
+Никогда не угадывай specs по автомобилю: только то, что реально видно на фото/маркировке.
 Для дворников part_class="wiper".
 Для ШРУСа/гранаты part_class="cv_joint".
 """
@@ -338,6 +348,104 @@ def _norm_words(text: str):
     return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) >= 2]
 
 
+
+def _num_or_none(v):
+    try:
+        return float(v)
+    except Exception:
+        return None
+
+def _extract_battery_specs(text: str):
+    """Best-effort parser from marketplace title. No invented values."""
+    import re
+    t = (text or "").replace(",", ".")
+    out = {"voltage_v": None, "capacity_ah": None, "cca_a": None}
+
+    m = re.search(r"\b(6|12|24)\s*V\b", t, re.I)
+    if m:
+        out["voltage_v"] = float(m.group(1))
+
+    # avoid accidentally treating 470A as Ah
+    m = re.search(r"\b(\d{2,3}(?:\.\d+)?)\s*Ah\b", t, re.I)
+    if m:
+        out["capacity_ah"] = float(m.group(1))
+
+    # Common forms: 470A, 680 A EN, CCA 760, 760CCA.
+    candidates = []
+    for pat in [
+        r"\bCCA\s*[:\-]?\s*(\d{3,4})\b",
+        r"\b(\d{3,4})\s*CCA\b",
+        r"\b(\d{3,4})\s*A\s*(?:EN|CCA)\b",
+        r"\b(\d{3,4})\s*A\b",
+    ]:
+        mm = re.search(pat, t, re.I)
+        if mm:
+            try:
+                val = float(mm.group(1))
+                if 200 <= val <= 1500:
+                    candidates.append(val)
+            except Exception:
+                pass
+    if candidates:
+        out["cca_a"] = candidates[0]
+    return out
+
+def _battery_spec_match(required: dict, offered: dict):
+    """
+    Returns score + status. Only compares specs that are actually known.
+    Capacity mismatch > ~12% is considered a strong mismatch for MVP ranking.
+    """
+    known = 0
+    score = 0
+    reasons = []
+
+    rv = _num_or_none((required or {}).get("voltage_v"))
+    ov = _num_or_none((offered or {}).get("voltage_v"))
+    if rv is not None and ov is not None:
+        known += 1
+        if abs(rv - ov) < 0.1:
+            score += 4
+            reasons.append("Voltage match")
+        else:
+            score -= 20
+            reasons.append("Voltage mismatch")
+
+    rah = _num_or_none((required or {}).get("capacity_ah"))
+    oah = _num_or_none((offered or {}).get("capacity_ah"))
+    if rah is not None and oah is not None:
+        known += 1
+        diff = abs(oah - rah) / max(rah, 1)
+        if diff <= 0.06:
+            score += 8
+            reasons.append("Ah close")
+        elif diff <= 0.12:
+            score += 3
+            reasons.append("Ah plausible")
+        else:
+            score -= 12
+            reasons.append("Ah mismatch")
+
+    rcca = _num_or_none((required or {}).get("cca_a"))
+    occa = _num_or_none((offered or {}).get("cca_a"))
+    if rcca is not None and occa is not None:
+        known += 1
+        # Equal/higher CCA is usually acceptable only if other physical specs match,
+        # so we rank it but do not call it verified fitment.
+        if occa >= rcca * 0.95:
+            score += 5
+            reasons.append("CCA sufficient")
+        else:
+            score -= 8
+            reasons.append("CCA low")
+
+    if known == 0:
+        return {"score": 0, "status": "unknown", "reasons": []}
+    if score < 0:
+        return {"score": score, "status": "mismatch", "reasons": reasons}
+    if score >= 10:
+        return {"score": score, "status": "strong", "reasons": reasons}
+    return {"score": score, "status": "partial", "reasons": reasons}
+
 def _extract_model_tokens(text: str):
     """
     Extract short alphanumeric model codes that matter for exact matching:
@@ -483,7 +591,7 @@ def _ebay_request(token, marketplace, country, postal, q, category_id="", compat
     r.raise_for_status()
     return r.json().get("itemSummaries", [])
 
-def ebay_search(oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None):
+def ebay_search(oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None, required_specs: dict | None = None):
     """
     Cascade search:
     1) precise category + compatibility
@@ -496,6 +604,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         return []
 
     vehicle = vehicle or {}
+    required_specs = required_specs or {}
     marketplace = {
         "DE":"EBAY_DE","LV":"EBAY_DE","LT":"EBAY_DE","EE":"EBAY_DE","PL":"EBAY_DE"
     }.get(country, "EBAY_DE")
@@ -582,6 +691,16 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             # Exact model code requested (e.g. S4) -> drop different Bosch batteries.
             continue
 
+        offered_specs = {}
+        spec_match = {"score": 0, "status": "unknown", "reasons": []}
+        if part_class == "battery":
+            offered_specs = _extract_battery_specs(title)
+            spec_match = _battery_spec_match(required_specs, offered_specs)
+            # If we know enough to see a clear mismatch, don't show it in the main list.
+            if spec_match["status"] == "mismatch":
+                continue
+            relevance += spec_match["score"]
+
         if relevance < 2:
             continue
 
@@ -611,6 +730,8 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             "search_attempts": attempt_log,
             "search_query_used": q,
             "part_class_used": part_class,
+            "offered_specs": offered_specs,
+            "spec_match": spec_match,
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
@@ -624,6 +745,8 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         "attempts": attempt_log,
         "query_used": q,
         "part_class_used": part_class,
+            "offered_specs": offered_specs,
+            "spec_match": spec_match,
         "raw_unique": len(collected),
         "after_relevance": len(out),
     }
@@ -633,15 +756,15 @@ class MerchantSource:
     name = "base"
     def enabled(self):
         return False
-    def search(self, oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None):
+    def search(self, oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None, required_specs: dict | None = None):
         return []
 
 class EbaySource(MerchantSource):
     name = "ebay"
     def enabled(self):
         return bool(os.getenv("EBAY_CLIENT_ID") and os.getenv("EBAY_CLIENT_SECRET"))
-    def search(self, oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None):
-        return ebay_search(oem, country, postal, search_query, part_class, vehicle) if self.enabled() else []
+    def search(self, oem: str, country: str, postal: str = "", search_query: str = "", part_class: str = "", vehicle: dict | None = None, required_specs: dict | None = None):
+        return ebay_search(oem, country, postal, search_query, part_class, vehicle, required_specs) if self.enabled() else []
 
 class OvokoSource(MerchantSource):
     name = "ovoko"
@@ -654,7 +777,7 @@ class OvokoSource(MerchantSource):
 SOURCES = [EbaySource(), OvokoSource()]
 
 @app.get("/api/offers/search")
-def offers_search(oem: str, country: str = "LV", postal: str = "", search_query: str = "", part_class: str = "", make: str = "", model: str = "", year: str = "", engine: str = ""):
+def offers_search(oem: str, country: str = "LV", postal: str = "", search_query: str = "", part_class: str = "", make: str = "", model: str = "", year: str = "", engine: str = "", voltage_v: str = "", capacity_ah: str = "", cca_a: str = ""):
     countries = {c["code"]: c for c in load_json("countries.json")}
     if country not in countries:
         raise HTTPException(400, "Неподдерживаемая страна.")
@@ -694,7 +817,11 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         if not source.enabled():
             continue
         try:
-            live = source.search(oem, country, postal, search_query, part_class, {"make":make,"model":model,"year":year,"engine":engine})
+            live = source.search(
+                oem, country, postal, search_query, part_class,
+                {"make":make,"model":model,"year":year,"engine":engine},
+                {"voltage_v": voltage_v, "capacity_ah": capacity_ah, "cca_a": cca_a}
+            )
             source_status[source.name] = "ok"
             if live:
                 found.extend(live)
