@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.7.1")
+app = FastAPI(title="PartSnap MVP v0.8")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.7.1",
+        "version": "0.8",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -65,8 +65,27 @@ async def analyze(
     prompt = f"""
 Ты модуль PartSnap. Проанализируй фото автомобильной детали.
 Автомобиль: {make} {model}, {year}, двигатель {engine}, VIN {vin or 'не указан'}.
-Не выдумывай OEM. Верни только JSON:
-{{"summary":"...","candidates":[{{"name":"...","confidence":0.0,"oem_hint":"...","reason":"..."}}]}}
+
+Очень важно:
+- не выдумывай OEM/артикул;
+- если на детали реально видна маркировка, перепиши её максимально точно;
+- если номер не читается полностью, укажи только видимую часть;
+- различай "visible_marking" (что реально видно на фото) и "oem_hint" (вероятный номер/семейство, только если есть основания);
+- если точная совместимость не подтверждена, это нормально.
+
+Верни только JSON:
+{{
+  "summary":"...",
+  "visible_marking":"что реально читается на детали или пустая строка",
+  "candidates":[
+    {{
+      "name":"...",
+      "confidence":0.0,
+      "oem_hint":"...",
+      "reason":"..."
+    }}
+  ]
+}}
 Максимум 3 кандидата.
 """
     try:
@@ -96,6 +115,74 @@ async def analyze(
     parsed["mode"]="ai"
     parsed["ok"]=True
     return parsed
+
+
+@app.post("/api/part/resolve")
+def resolve_part(
+    make: str = Form(""),
+    model: str = Form(""),
+    year: str = Form(""),
+    engine: str = Form(""),
+    vin: str = Form(""),
+    part_name: str = Form(""),
+    ai_oem_hint: str = Form(""),
+    visible_marking: str = Form(""),
+    manual_oem: str = Form("")
+):
+    """
+    v0.8 compatibility gate.
+
+    Priority:
+    1) explicit user-entered OEM/article;
+    2) exact visible marking from image;
+    3) AI hint (not verified);
+    4) no identifier -> do not claim exact compatibility.
+    """
+    def clean(v: str):
+        return (v or "").strip()
+
+    manual = clean(manual_oem)
+    marking = clean(visible_marking)
+    hint = clean(ai_oem_hint)
+
+    if manual:
+        return {
+            "status": "identifier_provided",
+            "verified": False,
+            "identifier": manual,
+            "identifier_source": "manual",
+            "part_name": part_name,
+            "message": "Артикул введён пользователем. Совместимость с автомобилем ещё не подтверждена внешним каталогом."
+        }
+
+    if marking:
+        return {
+            "status": "marking_detected",
+            "verified": False,
+            "identifier": marking,
+            "identifier_source": "visible_marking",
+            "part_name": part_name,
+            "message": "Маркировка считана с фото. Нужна проверка по внешнему каталогу/VIN."
+        }
+
+    if hint:
+        return {
+            "status": "ai_hint_only",
+            "verified": False,
+            "identifier": hint,
+            "identifier_source": "ai_hint",
+            "part_name": part_name,
+            "message": "Есть только AI-подсказка по номеру. Точная совместимость не подтверждена."
+        }
+
+    return {
+        "status": "unresolved",
+        "verified": False,
+        "identifier": "",
+        "identifier_source": "none",
+        "part_name": part_name,
+        "message": "Точный OEM/артикул не найден. Сфотографируйте маркировку крупнее или введите номер вручную."
+    }
 
 @app.post("/api/catalog/match")
 def catalog_match(

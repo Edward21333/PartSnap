@@ -29,10 +29,10 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 @keyframes a{from{transform:translateX(-100%)}to{transform:translateX(330%)}}
 .kpi{display:flex;gap:8px;margin-top:10px}.kpi>div{flex:1;background:#0f1722;border:1px solid var(--line);border-radius:12px;padding:10px}
 .kpi b{display:block;font-size:16px}.kpi span{font-size:11px;color:var(--muted)}
-.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
+.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.7.1</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.8</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -62,6 +62,9 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="row"><div><label>Марка</label><input id="make" value="Volkswagen"></div><div><label>Модель</label><input id="model" value="Golf IV"></div></div>
 <div class="row"><div><label>Год</label><input id="year" value="2000"></div><div><label>Двигатель</label><input id="engine" value="1.6 бензин"></div></div>
 <label>VIN</label><input id="vin" placeholder="WVWZZZ...">
+<label>OEM / артикул детали (если знаешь)</label>
+<input id="manualOem" placeholder="Например: 7P0 498 099">
+<div class="muted">Если номер уже известен, введи его — это надёжнее, чем угадывать по фото.</div>
 <button class="primary" id="go">Определить деталь</button>
 <div id="mode" class="status">Проверяю backend…</div>
 </div>
@@ -70,13 +73,13 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 
 <div id="result" class="card hidden">
 <div class="step">3. Кандидаты по фото</div>
-<div id="summary" class="muted"></div><div id="candidateList"></div>
+<div id="summary" class="muted"></div><div id="markingBox" class="compat hidden"></div><div id="candidateList"></div>
 <button id="catalogBtn" class="primary">Проверить по каталогу</button>
 </div>
 
 <div id="catalog" class="card hidden">
-<div class="step">4. Совместимость / OEM</div>
-<div id="catalogSummary" class="muted"></div><div id="matchList"></div>
+<div class="step">4. OEM / совместимость</div>
+<div id="catalogSummary" class="muted"></div><div id="resolveBox" class="compat"></div><div id="matchList"></div>
 <button id="offersBtn" class="primary">Найти цены с доставкой</button>
 </div>
 
@@ -88,7 +91,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.7.1: исправлен сбой после AI-анализа; добавлены видимые ошибки и переход к продавцу.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.8: добавлена маркировка/OEM, ручной артикул и защита от неподтверждённой совместимости.</div>
 </main>
 
 <script>
@@ -110,23 +113,70 @@ $('go').onclick=async()=>{
  const fd=new FormData();if(selectedFile)fd.append('image',selectedFile);vehicleForm(fd);
  try{
   const r=await fetch('/api/analyze',{method:'POST',body:fd});const j=await r.json();if(!r.ok){throw new Error(j?.error?.message||j?.detail||'Не удалось выполнить анализ');}
-  $('summary').textContent=j.summary||'';const list=$('candidateList');list.innerHTML='';selectedCandidate=null;
+  $('summary').textContent=j.summary||'';
+  aiVisibleMarking=j.visible_marking||'';
+  if(aiVisibleMarking){
+    $('markingBox').classList.remove('hidden');
+    $('markingBox').className='compat';
+    $('markingBox').innerHTML='<b>Маркировка на фото</b><span class="mono">'+aiVisibleMarking+'</span><div class="small">Это то, что AI реально смог прочитать на детали.</div>';
+  }else{
+    $('markingBox').classList.add('hidden');
+  }
+  const list=$('candidateList');list.innerHTML='';selectedCandidate=null;
   (j.candidates||[]).forEach((c,i)=>{const d=document.createElement('div');d.className='candidate'+(i===0?' active':'');d.innerHTML=`<strong>${c.name}</strong><div class="small">Уверенность: ${Math.round((c.confidence||0)*100)}% · <span class="mono">${c.oem_hint||'OEM не определён'}</span></div><div class="small">${c.reason||''}</div>`;d.onclick=()=>{document.querySelectorAll('.candidate').forEach(x=>x.classList.remove('active'));d.classList.add('active');selectedCandidate=c};list.appendChild(d);if(i===0)selectedCandidate=c});
   $('result').classList.remove('hidden');$('result').scrollIntoView({behavior:'smooth'});
  }catch(e){if($('errorBox')){$('errorBox').textContent=e.message;$('errorBox').classList.remove('hidden');$('errorBox').scrollIntoView({behavior:'smooth'});}}finally{$('loading').classList.add('hidden')}
 };
 
 $('catalogBtn').onclick=async()=>{
- const fd=new FormData();vehicleForm(fd);fd.append('part_name',selectedCandidate?.name||'');fd.append('oem_hint',selectedCandidate?.oem_hint||'');
- const r=await fetch('/api/catalog/match',{method:'POST',body:fd});const j=await r.json();
- $('catalogSummary').textContent=j.summary||'';const list=$('matchList');list.innerHTML='';selectedMatch=null;
- (j.matches||[]).forEach((m,i)=>{const d=document.createElement('div');d.className='match'+(i===0?' active':'');d.innerHTML=`<strong>${m.part_name}</strong><div class="small mono">${m.oem}</div><div class="small">${m.fitment_note}</div>`;d.onclick=()=>{document.querySelectorAll('.match').forEach(x=>x.classList.remove('active'));d.classList.add('active');selectedMatch=m};list.appendChild(d);if(i===0)selectedMatch=m});
- $('catalog').classList.remove('hidden');$('catalog').scrollIntoView({behavior:'smooth'});
+  if(!selectedCandidate)return;
+
+  const resolveFd=new FormData();
+  vehicleForm(resolveFd);
+  resolveFd.append('part_name',selectedCandidate.name||'');
+  resolveFd.append('ai_oem_hint',selectedCandidate.oem_hint||'');
+  resolveFd.append('visible_marking',aiVisibleMarking||'');
+  resolveFd.append('manual_oem',$('manualOem').value||'');
+
+  const rr=await fetch('/api/part/resolve',{method:'POST',body:resolveFd});
+  const resolved=await rr.json();
+  resolvedIdentifier=resolved.identifier||'';
+
+  $('resolveBox').className='compat '+(resolved.verified?'good':'warn');
+  $('resolveBox').innerHTML='<b>'+(
+      resolved.verified?'Совместимость подтверждена':'Точная совместимость пока не подтверждена'
+    )+'</b><div>'+resolved.message+'</div>'+
+    (resolvedIdentifier?'<div class="small mono" style="margin-top:6px">'+resolvedIdentifier+'</div>':'');
+
+  const fd=new FormData();
+  vehicleForm(fd);
+  fd.append('part_name',selectedCandidate.name||'');
+  fd.append('oem_hint',resolvedIdentifier||selectedCandidate.oem_hint||'');
+
+  const r=await fetch('/api/catalog/match',{method:'POST',body:fd});
+  const j=await r.json();
+  $('catalogSummary').textContent=j.summary||'';
+  const list=$('matchList');list.innerHTML='';selectedMatch=null;
+
+  (j.matches||[]).forEach((m,i)=>{
+    const d=document.createElement('div');
+    d.className='match'+(i===0?' active':'');
+    d.innerHTML=`<strong>${m.part_name}</strong><div class="small mono">${m.oem}</div><div class="small">${m.fitment_note}</div>`;
+    d.onclick=()=>{document.querySelectorAll('.match').forEach(x=>x.classList.remove('active'));d.classList.add('active');selectedMatch=m};
+    list.appendChild(d);if(i===0)selectedMatch=m;
+  });
+
+  if(!(j.matches||[]).length && resolvedIdentifier){
+    selectedMatch={part_name:selectedCandidate.name,oem:resolvedIdentifier,fitment_note:resolved.message};
+  }
+
+  $('catalog').classList.remove('hidden');
+  $('catalog').scrollIntoView({behavior:'smooth'});
 };
 
 $('offersBtn').onclick=async()=>{
  const country=$('country').value; const postal=$('postal').value;
- const url='/api/offers/search?oem='+encodeURIComponent(selectedMatch?.oem||'')+'&country='+encodeURIComponent(country)+'&postal='+encodeURIComponent(postal);
+ const searchOem=(selectedMatch?.oem||resolvedIdentifier||'').trim(); if(!searchOem){alert('Сначала нужен OEM/артикул. Сфотографируй маркировку крупнее или введи номер вручную.');return;} const url='/api/offers/search?oem='+encodeURIComponent(searchOem)+'&country='+encodeURIComponent(country)+'&postal='+encodeURIComponent(postal);
  const r=await fetch(url);const j=await r.json();
  $('chosen').textContent=`${selectedMatch.part_name} · ${selectedMatch.oem} · доставка в ${j.destination.name}`;
  const list=$('offersList');list.innerHTML='';
