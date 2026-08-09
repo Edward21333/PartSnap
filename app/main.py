@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.12.4")
+app = FastAPI(title="PartSnap MVP v0.13")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.12.4",
+        "version": "0.13",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -354,6 +354,74 @@ def _num_or_none(v):
         return float(v)
     except Exception:
         return None
+
+
+def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dict):
+    """
+    Semantic bucket for marketplace results.
+    This does not claim official fitment; it only judges whether the listing
+    appears to be the same type of part the user is looking for.
+    """
+    t = (title or "").lower()
+    make = (vehicle.get("make") or "").lower()
+    model = (vehicle.get("model") or "").lower()
+    q = (search_query or "").lower()
+
+    exact_terms = {
+        "cv_joint": ["cv joint", "outer joint", "outer cv", "außengelenk", "aussengelenk", "gelenksatz", "gleichlaufgelenk"],
+        "battery": ["battery", "batterie", "autobatterie", "starterbatterie", "akku"],
+        "wiper": ["wiper blade", "wiper", "scheibenwischer", "wischblatt"],
+        "brake": ["brake pad", "brake disc", "brake rotor", "bremsbelag", "bremsscheibe"],
+        "filter": ["filter"],
+        "lamp": ["headlight", "taillight", "scheinwerfer", "rückleuchte", "leuchte"],
+        "sensor": ["sensor", "geber", "fühler"],
+        "hose": ["hose", "schlauch", "leitung"],
+    }
+    related_terms = {
+        "cv_joint": ["antriebswelle", "driveshaft", "drive shaft", "gelenkwelle"],
+        "battery": ["battery terminal", "battery tray"],
+        "wiper": ["wiper arm", "wiper motor"],
+        "brake": ["caliper", "brake carrier"],
+        "filter": ["filter housing"],
+        "lamp": ["bulb", "lamp holder"],
+        "sensor": ["sensor cable", "sensor harness"],
+        "hose": ["pipe", "line"],
+    }
+    reject_terms = {
+        "cv_joint": ["boot only", "manschette", "faltenbalg", "wheel bearing", "radlager", "sensor", "abs ring"],
+        "battery": ["wiper", "blade", "lamp", "bulb", "filter"],
+        "wiper": ["battery", "batterie", "filter"],
+    }
+
+    exact = any(x in t for x in exact_terms.get(part_class, []))
+    related = any(x in t for x in related_terms.get(part_class, []))
+    rejected = any(x in t for x in reject_terms.get(part_class, []))
+
+    vehicle_hits = 0
+    if make and make in t:
+        vehicle_hits += 1
+    if model and model in t:
+        vehicle_hits += 2
+
+    q_words = [w for w in _norm_words(q) if len(w) >= 3]
+    q_hits = sum(1 for w in q_words if w in t)
+
+    if rejected:
+        return {"bucket": "reject", "score": 0, "label": "Не та деталь"}
+
+    if exact and vehicle_hits >= 2:
+        return {"bucket": "exact", "score": 100, "label": "Точное совпадение по типу"}
+    if exact:
+        return {"bucket": "likely", "score": 82 + min(vehicle_hits * 4, 8), "label": "Вероятное совпадение"}
+    if related and vehicle_hits >= 2:
+        return {"bucket": "similar", "score": 55, "label": "Похожая деталь"}
+    if related:
+        return {"bucket": "similar", "score": 40, "label": "Похожая деталь"}
+
+    if q_hits >= 2:
+        return {"bucket": "likely", "score": 70, "label": "Вероятное совпадение"}
+
+    return {"bucket": "reject", "score": 10, "label": "Низкая релевантность"}
 
 def _extract_battery_specs(text: str):
     """Best-effort parser from marketplace title. No invented values."""
@@ -801,6 +869,17 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         compat_match = item.get("compatibilityMatch", "")
         compat_props = item.get("compatibilityProperties", []) or []
 
+        semantic_match = _classify_offer(
+            title,
+            part_class,
+            successful_query or base_q,
+            vehicle
+        )
+
+        # Completely irrelevant items should not pollute the result list.
+        if semantic_match.get("bucket") == "reject":
+            continue
+
         out.append({
             "merchant":"eBay",
             "title":title,
@@ -825,19 +904,23 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             "part_class_used": part_class,
             "offered_specs": offered_specs,
             "spec_match": spec_match,
+            "semantic_match": semantic_match,
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
+    semantic_rank = {"exact": 0, "likely": 1, "similar": 2, "reject": 9}
+
     def fit_bucket(x):
         sm = x.get("spec_match") or {}
         score = sm.get("score")
-        # Known good scores first. Unknown goes after scored offers.
         return (0, -score) if isinstance(score, (int, float)) else (1, 0)
 
     out.sort(key=lambda x: (
+        semantic_rank.get((x.get("semantic_match") or {}).get("bucket","similar"), 5),
         0 if x.get("eu_seller") else 1,
         *fit_bucket(x),
         rank.get(x.get("compatibility_match",""), 3),
+        -int((x.get("semantic_match") or {}).get("score",0)),
         -x["relevance_score"],
         x["total"]
     ))
@@ -935,6 +1018,8 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
             source_status[source.name] = "error"
 
     def global_rank(x):
+        sr = {"exact":0,"likely":1,"similar":2,"reject":9}
+        semantic = x.get("semantic_match") or {}
         sm = x.get("spec_match") or {}
         score = sm.get("score")
         known_fit = 0 if isinstance(score, (int, float)) else 1
@@ -943,13 +1028,26 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         cr = {"EXACT":0,"POSSIBLE":1,"":2}.get(cm,3)
         eu = 0 if x.get("eu_seller") else 1
         rel = -int(x.get("relevance_score",0))
-        return (eu, known_fit, fit_score, cr, rel, x["total"])
+        return (
+            sr.get(semantic.get("bucket","similar"),5),
+            eu,
+            known_fit,
+            fit_score,
+            cr,
+            -int(semantic.get("score",0)),
+            rel,
+            x["total"]
+        )
     found.sort(key=global_rank)
     return {
         "destination": dest,
         "postal": postal,
         "offers": found,
-        "sort": "landed_total",
+        "best_relevant_price": next((
+            x["total"] for x in found
+            if (x.get("semantic_match") or {}).get("bucket") in {"exact","likely"}
+        ), None),
+        "sort": "semantic_fit_then_landed_total",
         "live_sources": live_sources,
         "source_status": source_status,
         "search_attempts": next((x.get("search_attempts", []) for x in found if x.get("source")=="ebay-live"), []),

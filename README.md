@@ -1,18 +1,22 @@
-# PartSnap MVP v0.12.4
+# PartSnap MVP v0.13
 
-Главное:
-- eBay errors теперь пишутся в Render Logs с mode/status/query/category/response;
-- ошибка одного eBay-запроса больше не ломает весь каскад;
-- PartSnap пробует несколько вариантов запроса.
+Главное изменение: PartSnap теперь оценивает не только релевантность текста, но и тип найденной детали.
+
+Каждое eBay-предложение получает одну из категорий:
+- Точное совпадение по типу
+- Вероятное совпадение
+- Похожая деталь
+- Не та деталь
 
 Для CV joint:
-1. AI/search query;
-2. OEM/маркировка как есть;
-3. OEM без пробелов;
-4. `outer CV joint`;
-5. `Rzeppa outer CV joint` / `VW Touareg outer CV joint`.
+- Gelenksatz / Außengelenk / CV joint -> exact/likely
+- Antriebswelle / driveshaft -> similar
+- boot-only / wheel bearing / sensor -> reject
 
-Если один вариант получает 400/500 от eBay, следующий всё равно выполняется.
-В интерфейсе попытки теперь показывают и сам query, а не только mode/count.
+Нерелевантные предложения удаляются из выдачи.
+Сортировка:
+semantic class -> EU -> spec fit -> eBay fitment -> relevance -> landed price.
 
-Цель: перестать получать просто `eBay API error` и одновременно сделать поиск устойчивее.
+Верхний KPI теперь называется:
+`лучшая цена подходящей детали`
+и берётся только из exact/likely результатов.
