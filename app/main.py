@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.12.2")
+app = FastAPI(title="PartSnap MVP v0.12.3")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.12.2",
+        "version": "0.12.3",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -732,7 +732,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             continue
 
         offered_specs = {}
-        spec_match = {"score": 0, "status": "unknown", "reasons": []}
+        spec_match = {"score": None, "status": "unknown", "reasons": [], "known_specs": 0, "hard_mismatch": False}
         if part_class == "battery":
             offered_specs = _extract_battery_specs(title)
             spec_match = _battery_spec_match(required_specs, offered_specs)
