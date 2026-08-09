@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.14")
+app = FastAPI(title="PartSnap MVP v0.15")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.14",
+        "version": "0.15",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -436,7 +436,7 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
     if q_hits >= 2:
         return {"bucket": "likely", "score": 68, "label": "Похоже по описанию · авто не подтверждено" if not vehicle_verified else "Вероятное совпадение", "vehicle_status": "hint_only" if not vehicle_verified else "unconfirmed"}
 
-    return {"bucket": "reject", "score": 10, "label": "Низкая релевантность", "vehicle_status": "n/a"}
+    return {"bucket": "other", "score": 10, "label": "Остальной результат eBay", "vehicle_status": "n/a"}
 
 
 def _extract_battery_specs(text: str):
@@ -893,10 +893,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             vehicle
         )
 
-        # Completely irrelevant items should not pollute the result list.
-        if semantic_match.get("bucket") == "reject":
-            continue
-
+        # Low-confidence marketplace results are kept for the collapsed "other" group.
         out.append({
             "merchant":"eBay",
             "title":title,
@@ -925,7 +922,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
-    semantic_rank = {"exact": 0, "likely": 1, "similar": 2, "reject": 9}
+    semantic_rank = {"exact": 0, "likely": 1, "similar": 2, "other": 3, "reject": 4}
 
     def fit_bucket(x):
         sm = x.get("spec_match") or {}
@@ -1035,7 +1032,7 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
             source_status[source.name] = "error"
 
     def global_rank(x):
-        sr = {"exact":0,"likely":1,"similar":2,"reject":9}
+        sr = {"exact":0,"likely":1,"similar":2,"other":3,"reject":4}
         semantic = x.get("semantic_match") or {}
         sm = x.get("spec_match") or {}
         score = sm.get("score")
@@ -1060,11 +1057,16 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         "destination": dest,
         "postal": postal,
         "offers": found,
+        "group_counts": {
+            "match": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") in {"exact","likely"}),
+            "similar": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") == "similar"),
+            "other": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") in {"other","reject"}),
+        },
         "best_relevant_price": next((
             x["total"] for x in found
             if (x.get("semantic_match") or {}).get("bucket") in {"exact","likely"}
         ), None),
-        "sort": "semantic_fit_then_landed_total",
+        "sort": "semantic_group_then_fit_then_landed_total",
         "live_sources": live_sources,
         "source_status": source_status,
         "search_attempts": next((x.get("search_attempts", []) for x in found if x.get("source")=="ebay-live"), []),
