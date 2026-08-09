@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.17")
+app = FastAPI(title="PartSnap MVP v0.18")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.17",
+        "version": "0.18",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -357,7 +357,7 @@ def _num_or_none(v):
 
 
 def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dict):
-    """Semantic marketplace classifier v0.17."""
+    """Semantic marketplace classifier v0.18."""
     t = " ".join((title or "").lower().replace("-", " ").replace("/", " ").split())
     make=(vehicle.get("make") or "").lower().strip()
     model=(vehicle.get("model") or "").lower().strip()
@@ -697,27 +697,57 @@ def _log_ebay_error(mode: str, q: str, category_id: str, compatibility_filter: s
         pass
 
 def _query_variants(oem: str, search_query: str, part_class: str):
+    """
+    Safe query fallbacks.
+    Never search a photographed marking by itself unless it is a true manual OEM.
+    A marking like "GO 295" can otherwise match tire sizes, snow chains, etc.
+    """
     variants = []
+
     def add(v):
-        v = (v or "").strip()
+        v = " ".join((v or "").split()).strip()
         if v and v not in variants:
             variants.append(v)
 
-    add(search_query)
-    add(oem)
-    add((oem or "").replace(" ", ""))
+    base = (search_query or "").strip()
+    mark = (oem or "").strip()
+    mark_compact = mark.replace(" ", "")
+
+    add(base)
 
     if part_class == "cv_joint":
+        # Keep the semantic identity in every marking-based fallback.
+        if mark:
+            add(f"{mark} CV joint")
+            add(f"{mark} Gelenksatz")
+        if mark_compact and mark_compact != mark:
+            add(f"{mark_compact} CV joint")
         add("outer CV joint")
         add("Rzeppa outer CV joint")
-        add("VW Touareg outer CV joint")
-    elif part_class == "battery":
-        add(f"{oem} Autobatterie".strip())
-        add(f"{oem} car battery".strip())
-    else:
-        add(f"{oem} auto part".strip())
+        add("Gelenksatz Antriebswelle")
+        add("Gleichlaufgelenk Antriebswelle")
 
-    return variants[:5]
+    elif part_class == "battery":
+        if mark:
+            add(f"{mark} car battery")
+            add(f"{mark} Autobatterie")
+        add("car battery")
+        add("Autobatterie")
+
+    elif part_class == "wiper":
+        if mark:
+            add(f"{mark} wiper blade")
+        add("wiper blade")
+        add("Scheibenwischer")
+
+    else:
+        # For generic parts, still keep an automotive noun attached.
+        if mark:
+            add(f"{mark} auto part")
+        add(base)
+
+    return variants[:7]
+
 
 def _ebay_request(token, marketplace, country, postal, q, category_id="", compatibility_filter="", seller_countries=None, limit=50):
     import requests
@@ -848,6 +878,21 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             continue
 
         title = item.get("title", "")
+        title_l = title.lower()
+
+        if part_class == "cv_joint":
+            cv_noise = [
+                "schneeketten", "snow chain", "snow chains", "tyre chain", "tire chain",
+                "295/30", "295 30", "wheel chain", "reifen", "tyre", "tire"
+            ]
+            cv_identity = [
+                "cv joint", "outer cv", "inner cv", "rzeppa", "gelenksatz",
+                "gleichlaufgelenk", "antriebswellengelenk", "cv gelenk",
+                "joint kit", "joint set", "antriebswelle", "driveshaft", "gelenkwelle"
+            ]
+            if any(x in title_l for x in cv_noise) and not any(x in title_l for x in cv_identity):
+                continue
+
         relevance = _relevance_score(title, successful_query or base_q, part_class)
 
         query_models = _extract_model_tokens(successful_query or base_q)
@@ -930,6 +975,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
     _EBAY_DIAGNOSTICS[(country, oem, search_query, part_class)] = {
         "attempts": attempt_log,
         "query_used": successful_query or base_q,
+        "query_variants": query_variants,
         "part_class_used": part_class,
             "offered_specs": offered_specs,
             "spec_match": spec_match,
