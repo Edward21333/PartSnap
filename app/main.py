@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.18")
+app = FastAPI(title="PartSnap MVP v0.19")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.18",
+        "version": "0.19",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -357,7 +357,7 @@ def _num_or_none(v):
 
 
 def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dict):
-    """Semantic marketplace classifier v0.18."""
+    """Semantic marketplace classifier v0.19."""
     t = " ".join((title or "").lower().replace("-", " ").replace("/", " ").split())
     make=(vehicle.get("make") or "").lower().strip()
     model=(vehicle.get("model") or "").lower().strip()
@@ -386,9 +386,9 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
         # Explicit joint identity wins even if kit also includes boot/grease/clamps.
         if is_core:
             if verified and vh>=2:
-                return {"bucket":"exact","score":100,"label":"Сама деталь · авто совпадает","vehicle_status":"matched"}
+                return {"bucket":"exact","score":100,"label":"Точное совпадение · авто совпадает","vehicle_status":"matched"}
             return {"bucket":"exact","score":92 if not is_acc else 89,
-                    "label":"Сама деталь · применимость не проверена" if not verified else "Сама деталь · применимость требует проверки",
+                    "label":"Тот же тип детали · применимость не проверена" if not verified else "Тот же тип детали · применимость требует проверки",
                     "vehicle_status":"hint_only" if not verified else "unconfirmed"}
         if is_acc:
             return {"bucket":"accessory","score":28,"label":"Сопутствующий товар","vehicle_status":"n/a"}
@@ -419,8 +419,8 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
         return {"bucket":"accessory","score":30,"label":"Сопутствующий товар","vehicle_status":"n/a"}
     if exact:
         if verified and vh>=2:
-            return {"bucket":"exact","score":100,"label":"Сама деталь · авто совпадает","vehicle_status":"matched"}
-        return {"bucket":"exact","score":88,"label":"Сама деталь · применимость не проверена",
+            return {"bucket":"exact","score":100,"label":"Точное совпадение · авто совпадает","vehicle_status":"matched"}
+        return {"bucket":"exact","score":88,"label":"Тот же тип детали · применимость не проверена",
                 "vehicle_status":"hint_only" if not verified else "unconfirmed"}
     qwords=[w for w in _norm_words((search_query or "").lower()) if len(w)>=4]
     if sum(1 for w in qwords if w in t)>=2:
@@ -927,7 +927,27 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             vehicle
         )
 
-        # Low-confidence marketplace results are kept for the collapsed "other" group.
+        # Convert raw semantic bucket into a user-facing trust tier.
+        # "exact" here means exact PART TYPE unless OEM/eBay fitment confirms more.
+        if compat_match == "EXACT":
+            confidence_tier = "exact"
+            confidence_label = "Точное совпадение по eBay"
+        elif semantic_match.get("bucket") == "exact":
+            confidence_tier = "same_type"
+            confidence_label = "Тот же тип детали"
+        elif semantic_match.get("bucket") == "likely":
+            confidence_tier = "analogue"
+            confidence_label = "Возможный аналог"
+        elif semantic_match.get("bucket") == "similar":
+            confidence_tier = "similar"
+            confidence_label = "Похожая / смежная деталь"
+        elif semantic_match.get("bucket") == "accessory":
+            confidence_tier = "accessory"
+            confidence_label = "Сопутствующий товар"
+        else:
+            confidence_tier = "other"
+            confidence_label = "Остальной результат"
+
         out.append({
             "merchant":"eBay",
             "title":title,
@@ -953,6 +973,8 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             "offered_specs": offered_specs,
             "spec_match": spec_match,
             "semantic_match": semantic_match,
+            "confidence_tier": confidence_tier,
+            "confidence_label": confidence_label,
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
