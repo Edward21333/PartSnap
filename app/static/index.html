@@ -29,11 +29,11 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 @keyframes a{from{transform:translateX(-100%)}to{transform:translateX(330%)}}
 .kpi{display:flex;gap:8px;margin-top:10px}.kpi>div{flex:1;background:#0f1722;border:1px solid var(--line);border-radius:12px;padding:10px}
 .kpi b{display:block;font-size:16px}.kpi span{font-size:11px;color:var(--muted)}
-.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.specGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.specGrid input{padding:10px}.specGood{color:#77e2a9}.specPartial{color:#f5c86b}.fitScore{display:inline-block;font-size:11px;font-weight:800;padding:5px 7px;border-radius:999px;margin-top:6px;background:#16243a}.fitScore.good{background:#12311f;color:#77e2a9}.fitScore.mid{background:#332a13;color:#f5c86b}.fitScore.low{background:#35181d;color:#ffadb7}.matchExact{background:#12311f;color:#77e2a9}.matchLikely{background:#332a13;color:#f5c86b}.matchSimilar{background:#1b2a40;color:#b9c8db}.matchOther{background:#151a22;color:#8fa1b6}.offerGroup{margin-top:14px}.offerGroupTitle{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:800;margin:8px 0}.groupCount{font-size:11px;color:var(--muted);font-weight:600}.otherToggle{width:100%;margin-top:10px;background:#111d2b;border:1px solid var(--line);color:#b9c8db;padding:11px;border-radius:10px;font-weight:700;cursor:pointer}.otherWrap.hidden{display:none}.vehicleTrust{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px}.vehicleTrust input{width:auto}
+.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.specGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.specGrid input{padding:10px}.specGood{color:#77e2a9}.specPartial{color:#f5c86b}.fitScore{display:inline-block;font-size:11px;font-weight:800;padding:5px 7px;border-radius:999px;margin-top:6px;background:#16243a}.fitScore.good{background:#12311f;color:#77e2a9}.fitScore.mid{background:#332a13;color:#f5c86b}.fitScore.low{background:#35181d;color:#ffadb7}.matchExact{background:#12311f;color:#77e2a9}.matchLikely{background:#332a13;color:#f5c86b}.matchSimilar{background:#1b2a40;color:#b9c8db}.matchOther{background:#151a22;color:#8fa1b6}.matchAccessory{background:#322417;color:#f3bd72}.matchAnalogue{background:#332a13;color:#f5c86b}.offerGroup{margin-top:14px}.offerGroupTitle{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:800;margin:8px 0}.groupCount{font-size:11px;color:var(--muted);font-weight:600}.otherToggle{width:100%;margin-top:10px;background:#111d2b;border:1px solid var(--line);color:#b9c8db;padding:11px;border-radius:10px;font-weight:700;cursor:pointer}.otherWrap.hidden{display:none}.vehicleTrust{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px}.vehicleTrust input{width:auto}
 .uploadChoices{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.uploadChoices input[type=file]{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}.uploadBtn{display:flex;align-items:center;justify-content:center;min-height:44px;padding:10px 12px;border-radius:10px;background:#1b2a40;border:1px solid var(--line);font-weight:700;cursor:pointer;text-align:center}.secondaryUpload{background:#111d2b}@media(max-width:430px){.uploadChoices{grid-template-columns:1fr}}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.15</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.16</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -106,12 +106,12 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div id="offersCard" class="card hidden">
 <div class="step">5. Где дешевле именно для тебя</div>
 <div id="chosen" class="muted"></div><div id="fitmentWarning" class="compat warn hidden"></div>
-<div class="kpi"><div><b id="countKpi">0</b><span>доступных предложений</span></div><div><b id="bestKpi">—</b><span>лучшая цена подходящей детали</span></div></div>
+<div class="kpi"><div><b id="countKpi">0</b><span>доступных предложений</span></div><div><b id="bestKpi">—</b><span>лучшая цена самой детали / аналога</span></div></div>
 <div id="offersList" style="margin-top:10px"></div>
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.15: выдача разделена на подходящие, похожие и остальные результаты eBay.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.16: PartSnap отличает саму деталь от аналогов и сопутствующих товаров вроде пыльников, смазки и хомутов.</div>
 </main>
 
 <script>
@@ -286,7 +286,7 @@ $('offersBtn').onclick=async()=>{
    const importText=o.import_fee>0?` + импорт €${o.import_fee.toFixed(2)}`:'';
    const compatTxt=o.compatibility_match==='EXACT'?'✓ Совместимость eBay: точное совпадение':(o.compatibility_match==='POSSIBLE'?'~ Совместимость eBay: возможно':'');
    const sem=o.semantic_match||{};
-   const semClass=sem.bucket==='exact'?'matchExact':(sem.bucket==='likely'?'matchLikely':(sem.bucket==='similar'?'matchSimilar':'matchOther'));
+   const semClass=sem.bucket==='exact'?'matchExact':(sem.bucket==='likely'?'matchAnalogue':(sem.bucket==='similar'?'matchSimilar':(sem.bucket==='accessory'?'matchAccessory':'matchOther')));
    const semLabel=sem.label||(sem.bucket==='other'?'Остальной результат eBay':'Похожая деталь');
    const sm=o.spec_match||{};
    const os=o.offered_specs||{};
@@ -302,8 +302,10 @@ $('offersBtn').onclick=async()=>{
 
  const offers=j.offers||[];
  const groups={
-   match:offers.filter(o=>['exact','likely'].includes(o.semantic_match?.bucket)),
+   part:offers.filter(o=>o.semantic_match?.bucket==='exact'),
+   analogue:offers.filter(o=>o.semantic_match?.bucket==='likely'),
    similar:offers.filter(o=>o.semantic_match?.bucket==='similar'),
+   accessory:offers.filter(o=>o.semantic_match?.bucket==='accessory'),
    other:offers.filter(o=>['other','reject'].includes(o.semantic_match?.bucket))
  };
 
@@ -331,17 +333,21 @@ $('offersBtn').onclick=async()=>{
    list.appendChild(wrap);
  };
 
- appendGroup('Подходящие по типу',groups.match);
- appendGroup('Похожие детали',groups.similar);
+ appendGroup('Сама деталь',groups.part);
+ appendGroup('Возможные аналоги',groups.analogue);
+ appendGroup('Похожие / смежные детали',groups.similar);
+ appendGroup('Сопутствующие товары',groups.accessory,true);
  appendGroup('Остальные результаты eBay',groups.other,true);
 
  const gc=j.group_counts||{};
  $('countKpi').textContent=offers.length;
- $('bestKpi').textContent=(j.best_relevant_price!==null && j.best_relevant_price!==undefined)?'€'+Number(j.best_relevant_price).toFixed(2):(groups.match.length?'€'+groups.match[0].total.toFixed(2):'—');
+ $('bestKpi').textContent=(j.best_relevant_price!==null && j.best_relevant_price!==undefined)?'€'+Number(j.best_relevant_price).toFixed(2):(groups.part.length?'€'+groups.part[0].total.toFixed(2):(groups.analogue.length?'€'+groups.analogue[0].total.toFixed(2):'—'));
  if(offers.length){
    const parts=[];
-   if(gc.match)parts.push('подходящих '+gc.match);
+   if(gc.part)parts.push('сама деталь '+gc.part);
+   if(gc.analogue)parts.push('аналогов '+gc.analogue);
    if(gc.similar)parts.push('похожих '+gc.similar);
+   if(gc.accessory)parts.push('сопутствующих '+gc.accessory);
    if(gc.other)parts.push('остальных '+gc.other);
    if(parts.length)$('chosen').textContent+=' · '+parts.join(', ');
  }

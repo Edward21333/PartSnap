@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.15")
+app = FastAPI(title="PartSnap MVP v0.16")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.15",
+        "version": "0.16",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -358,10 +358,16 @@ def _num_or_none(v):
 
 def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dict):
     """
-    Semantic bucket for marketplace results.
+    Classify marketplace result by WHAT the listing actually sells.
 
-    If vehicle is verified, another named car is a hard mismatch.
-    If vehicle is not verified, make/model are hints only.
+    Buckets:
+    - exact: same part type
+    - likely: plausible analogue / same functional part
+    - accessory: related consumable / kit / cover / grease / clamp etc.
+    - similar: adjacent assembly, e.g. full driveshaft instead of CV joint
+    - other: weakly related marketplace result
+
+    Vehicle is only a hard filter when explicitly verified.
     """
     t = (title or "").lower()
     make = (vehicle.get("make") or "").lower()
@@ -370,7 +376,10 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
     q = (search_query or "").lower()
 
     exact_terms = {
-        "cv_joint": ["cv joint", "outer joint", "outer cv", "außengelenk", "aussengelenk", "gelenksatz", "gleichlaufgelenk"],
+        "cv_joint": [
+            "cv joint", "outer joint", "outer cv", "außengelenk", "aussengelenk",
+            "gelenksatz", "gleichlaufgelenk", "homokinetic joint", "constant velocity joint"
+        ],
         "battery": ["battery", "batterie", "autobatterie", "starterbatterie", "akku"],
         "wiper": ["wiper blade", "wiper", "scheibenwischer", "wischblatt"],
         "brake": ["brake pad", "brake disc", "brake rotor", "bremsbelag", "bremsscheibe"],
@@ -379,25 +388,43 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
         "sensor": ["sensor", "geber", "fühler"],
         "hose": ["hose", "schlauch", "leitung"],
     }
-    related_terms = {
-        "cv_joint": ["antriebswelle", "driveshaft", "drive shaft", "gelenkwelle"],
-        "battery": ["battery terminal", "battery tray"],
+
+    related_assembly_terms = {
+        "cv_joint": ["antriebswelle", "driveshaft", "drive shaft", "gelenkwelle", "half shaft", "axle shaft"],
+        "battery": ["battery tray"],
         "wiper": ["wiper arm", "wiper motor"],
         "brake": ["caliper", "brake carrier"],
         "filter": ["filter housing"],
-        "lamp": ["bulb", "lamp holder"],
-        "sensor": ["sensor cable", "sensor harness"],
+        "lamp": ["lamp holder"],
+        "sensor": ["sensor harness"],
         "hose": ["pipe", "line"],
     }
-    reject_terms = {
-        "cv_joint": ["boot only", "manschette", "faltenbalg", "wheel bearing", "radlager", "sensor", "abs ring"],
+
+    accessory_terms = {
+        "cv_joint": [
+            "boot kit", "cv boot", "joint boot", "gaiter", "manschette", "faltenbalg",
+            "grease", "fett", "lubricant", "clamp", "clip", "strap", "band", "ring",
+            "dust cover", "repair kit", "seal kit"
+        ],
+        "battery": ["terminal clamp", "battery terminal", "battery holder", "battery strap", "battery cover"],
+        "wiper": ["adapter", "clip", "connector", "refill rubber"],
+        "brake": ["hardware kit", "spring kit", "sensor wire", "wear sensor"],
+        "filter": ["housing cap", "seal", "o-ring"],
+        "lamp": ["bulb", "socket", "holder", "adapter"],
+        "sensor": ["cable", "connector", "plug", "harness"],
+        "hose": ["clamp", "connector", "fitting"],
+    }
+
+    hard_reject_terms = {
+        "cv_joint": ["wheel bearing", "radlager", "abs sensor"],
         "battery": ["wiper", "blade", "lamp", "bulb", "filter"],
         "wiper": ["battery", "batterie", "filter"],
     }
 
     exact = any(x in t for x in exact_terms.get(part_class, []))
-    related = any(x in t for x in related_terms.get(part_class, []))
-    rejected = any(x in t for x in reject_terms.get(part_class, []))
+    related = any(x in t for x in related_assembly_terms.get(part_class, []))
+    accessory = any(x in t for x in accessory_terms.get(part_class, []))
+    hard_reject = any(x in t for x in hard_reject_terms.get(part_class, []))
 
     vehicle_hits = 0
     if make and make in t:
@@ -408,7 +435,8 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
     other_vehicle_terms = [
         "jeep","wrangler","pajero","mitsubishi","touareg","volvo","s60","passat",
         "golf","transporter","caravelle","multivan","audi","bmw","mercedes","ford",
-        "toyota","nissan","honda","skoda","seat","peugeot","renault","fiat"
+        "toyota","nissan","honda","skoda","seat","peugeot","renault","fiat",
+        "ssangyong","rexton","chrysler","dodge","plymouth","mini"
     ]
     mentions_other_vehicle = any(v in t for v in other_vehicle_terms)
     matches_requested_vehicle = bool(vehicle_hits)
@@ -416,25 +444,40 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
     q_words = [w for w in _norm_words(q) if len(w) >= 3]
     q_hits = sum(1 for w in q_words if w in t)
 
-    if rejected:
-        return {"bucket": "reject", "score": 0, "label": "Не та деталь", "vehicle_status": "n/a"}
+    if hard_reject:
+        return {"bucket": "other", "score": 5, "label": "Другой товар", "vehicle_status": "n/a"}
+
+    # Accessories must win over "exact" keyword matches.
+    # Example: "Outer CV Joint Grease" contains "CV Joint" but sells grease, not the joint.
+    if accessory:
+        return {"bucket": "accessory", "score": 30, "label": "Сопутствующий товар", "vehicle_status": "n/a"}
 
     if vehicle_verified and make and model and mentions_other_vehicle and not matches_requested_vehicle:
-        return {"bucket": "reject", "score": 0, "label": "Другая машина", "vehicle_status": "mismatch"}
+        return {"bucket": "other", "score": 0, "label": "Для другой машины", "vehicle_status": "mismatch"}
 
     if exact and vehicle_verified and vehicle_hits >= 2:
-        return {"bucket": "exact", "score": 100, "label": "Точное совпадение по типу и авто", "vehicle_status": "matched"}
+        return {"bucket": "exact", "score": 100, "label": "Сама деталь · авто совпадает", "vehicle_status": "matched"}
 
     if exact:
         if vehicle_verified:
-            return {"bucket": "likely", "score": 82 + min(vehicle_hits * 4, 8), "label": "Вероятное совпадение", "vehicle_status": "unconfirmed"}
-        return {"bucket": "likely", "score": 78, "label": "Та же деталь · авто не подтверждено", "vehicle_status": "hint_only"}
+            return {"bucket": "likely", "score": 84 + min(vehicle_hits * 4, 8), "label": "Возможный аналог", "vehicle_status": "unconfirmed"}
+        return {"bucket": "exact", "score": 88, "label": "Сама деталь · применимость не проверена", "vehicle_status": "hint_only"}
 
     if related:
-        return {"bucket": "similar", "score": 50 if vehicle_hits else 40, "label": "Похожая деталь", "vehicle_status": "hint_only" if not vehicle_verified else "unconfirmed"}
+        return {
+            "bucket": "similar",
+            "score": 50 if vehicle_hits else 40,
+            "label": "Смежная сборка / похожая деталь",
+            "vehicle_status": "hint_only" if not vehicle_verified else "unconfirmed"
+        }
 
     if q_hits >= 2:
-        return {"bucket": "likely", "score": 68, "label": "Похоже по описанию · авто не подтверждено" if not vehicle_verified else "Вероятное совпадение", "vehicle_status": "hint_only" if not vehicle_verified else "unconfirmed"}
+        return {
+            "bucket": "likely",
+            "score": 65,
+            "label": "Возможный аналог · применимость не проверена" if not vehicle_verified else "Возможный аналог",
+            "vehicle_status": "hint_only" if not vehicle_verified else "unconfirmed"
+        }
 
     return {"bucket": "other", "score": 10, "label": "Остальной результат eBay", "vehicle_status": "n/a"}
 
@@ -922,7 +965,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         })
 
     rank = {"EXACT": 0, "POSSIBLE": 1, "": 2}
-    semantic_rank = {"exact": 0, "likely": 1, "similar": 2, "other": 3, "reject": 4}
+    semantic_rank = {"exact": 0, "likely": 1, "similar": 2, "accessory": 3, "other": 4, "reject": 5}
 
     def fit_bucket(x):
         sm = x.get("spec_match") or {}
@@ -1032,7 +1075,7 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
             source_status[source.name] = "error"
 
     def global_rank(x):
-        sr = {"exact":0,"likely":1,"similar":2,"other":3,"reject":4}
+        sr = {"exact":0,"likely":1,"similar":2,"accessory":3,"other":4,"reject":5}
         semantic = x.get("semantic_match") or {}
         sm = x.get("spec_match") or {}
         score = sm.get("score")
@@ -1058,8 +1101,10 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         "postal": postal,
         "offers": found,
         "group_counts": {
-            "match": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") in {"exact","likely"}),
+            "part": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") == "exact"),
+            "analogue": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") == "likely"),
             "similar": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") == "similar"),
+            "accessory": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") == "accessory"),
             "other": sum(1 for x in found if (x.get("semantic_match") or {}).get("bucket") in {"other","reject"}),
         },
         "best_relevant_price": next((
