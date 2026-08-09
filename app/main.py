@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.20")
+app = FastAPI(title="PartSnap MVP v0.20.1")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -35,7 +35,7 @@ def vehicle_catalog():
 def health():
     return {
         "ok": True,
-        "version": "0.20",
+        "version": "0.20.1",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -361,7 +361,7 @@ def _num_or_none(v):
 
 
 def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dict):
-    """Semantic marketplace classifier v0.20."""
+    """Semantic marketplace classifier v0.20.1."""
     t = " ".join((title or "").lower().replace("-", " ").replace("/", " ").split())
     make=(vehicle.get("make") or "").lower().strip()
     model=(vehicle.get("model") or "").lower().strip()

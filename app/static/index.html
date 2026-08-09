@@ -33,7 +33,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 .uploadChoices{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.uploadChoices input[type=file]{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}.uploadBtn{display:flex;align-items:center;justify-content:center;min-height:44px;padding:10px 12px;border-radius:10px;background:#1b2a40;border:1px solid var(--line);font-weight:700;cursor:pointer;text-align:center}.secondaryUpload{background:#111d2b}@media(max-width:430px){.uploadChoices{grid-template-columns:1fr}}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 .vehicleMode{display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 12px}.vehicleMode label{display:flex;gap:7px;align-items:center;font-size:13px}.vehicleMode input{width:auto}select{width:100%;background:#0b1420;color:#fff;border:1px solid var(--line);border-radius:10px;padding:12px}select:disabled{opacity:.55}</style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.20</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.20.1</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -116,12 +116,128 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.18: bare-маркировка больше не уводит eBay в случайные товары; запрос всегда сохраняет тип детали.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.20.1: исправлена работа выбора автомобиля из каталога.</div>
 </main>
 
 <script>
 let selectedFile=null,selectedCandidate=null,selectedMatch=null;
 const $=id=>document.getElementById(id);
+
+let vehicleCatalog={};
+let vehicleStateMode='unknown';
+
+function setOptions(el,items,placeholder){
+  el.innerHTML='';
+  const p=document.createElement('option');
+  p.value='';
+  p.textContent=placeholder;
+  el.appendChild(p);
+  items.forEach(v=>{
+    const o=document.createElement('option');
+    o.value=v;
+    o.textContent=v;
+    el.appendChild(o);
+  });
+}
+
+function yearsFromRange(r){
+  const m=String(r||'').match(/(\d{4})-(\d{4})/);
+  if(!m)return [];
+  const a=Number(m[1]), b=Number(m[2]), out=[];
+  for(let y=a;y<=b;y++)out.push(String(y));
+  return out;
+}
+
+function resetVehicleSelectors(){
+  setOptions($('model'),[],'Сначала марка');
+  $('model').disabled=true;
+  setOptions($('year'),[],'Сначала модель');
+  $('year').disabled=true;
+  setOptions($('engine'),[],'Сначала год');
+  $('engine').disabled=true;
+}
+
+async function loadVehicleCatalog(){
+  try{
+    const r=await fetch('/api/vehicles');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    vehicleCatalog=await r.json();
+    setOptions($('make'),Object.keys(vehicleCatalog).sort(),'Выбери марку');
+  }catch(e){
+    vehicleCatalog={};
+    $('vehicleState').textContent='Не удалось загрузить каталог автомобилей.';
+  }
+}
+
+document.querySelectorAll('input[name="vehicleMode"]').forEach(radio=>{
+  radio.addEventListener('change',e=>{
+    vehicleStateMode=e.target.value;
+    const choose=vehicleStateMode==='catalog';
+    $('vehicleSelectors').classList.toggle('hidden',!choose);
+
+    if(!choose){
+      $('make').value='';
+      resetVehicleSelectors();
+      $('vehicleState').textContent='Состояние: автомобиль неизвестен — поиск идёт по фото и маркировке.';
+    }else{
+      $('vehicleState').textContent='Состояние: выбери автомобиль из каталога.';
+      if(!Object.keys(vehicleCatalog).length)loadVehicleCatalog();
+    }
+  });
+});
+
+$('make').addEventListener('change',()=>{
+  const make=$('make').value;
+  resetVehicleSelectors();
+  if(!make)return;
+  setOptions($('model'),Object.keys(vehicleCatalog[make]||{}).sort(),'Выбери модель');
+  $('model').disabled=false;
+});
+
+$('model').addEventListener('change',()=>{
+  const make=$('make').value;
+  const model=$('model').value;
+  setOptions($('year'),[],'Выбери год');
+  $('year').disabled=true;
+  setOptions($('engine'),[],'Сначала год');
+  $('engine').disabled=true;
+  if(!make||!model)return;
+
+  const ranges=Object.keys(vehicleCatalog[make]?.[model]||{});
+  const years=[...new Set(ranges.flatMap(yearsFromRange))].sort((a,b)=>Number(a)-Number(b));
+  setOptions($('year'),years,'Выбери год');
+  $('year').disabled=false;
+});
+
+$('year').addEventListener('change',()=>{
+  const make=$('make').value;
+  const model=$('model').value;
+  const year=Number($('year').value);
+
+  setOptions($('engine'),[],'Выбери двигатель');
+  $('engine').disabled=true;
+  if(!make||!model||!year)return;
+
+  const data=vehicleCatalog[make]?.[model]||{};
+  const engines=[];
+  Object.entries(data).forEach(([range,list])=>{
+    const m=range.match(/(\d{4})-(\d{4})/);
+    if(m && year>=Number(m[1]) && year<=Number(m[2])){
+      list.forEach(x=>{if(!engines.includes(x))engines.push(x);});
+    }
+  });
+  setOptions($('engine'),engines,'Выбери двигатель');
+  $('engine').disabled=false;
+});
+
+$('engine').addEventListener('change',()=>{
+  if($('engine').value){
+    $('vehicleState').textContent='Состояние: автомобиль выбран из каталога — используется как структурированная подсказка.';
+  }
+});
+
+loadVehicleCatalog();
+
 
 function handleSelectedImage(input){
   selectedFile=input.files[0]||null;
