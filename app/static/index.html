@@ -29,10 +29,11 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 @keyframes a{from{transform:translateX(-100%)}to{transform:translateX(330%)}}
 .kpi{display:flex;gap:8px;margin-top:10px}.kpi>div{flex:1;background:#0f1722;border:1px solid var(--line);border-radius:12px;padding:10px}
 .kpi b{display:block;font-size:16px}.kpi span{font-size:11px;color:var(--muted)}
-.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.specGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.specGrid input{padding:10px}.specGood{color:#77e2a9}.specPartial{color:#f5c86b}.fitScore{display:inline-block;font-size:11px;font-weight:800;padding:5px 7px;border-radius:999px;margin-top:6px;background:#16243a}.fitScore.good{background:#12311f;color:#77e2a9}.fitScore.mid{background:#332a13;color:#f5c86b}.fitScore.low{background:#35181d;color:#ffadb7}.matchExact{background:#12311f;color:#77e2a9}.matchLikely{background:#332a13;color:#f5c86b}.matchSimilar{background:#1b2a40;color:#b9c8db}.uploadChoices{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.uploadChoices input[type=file]{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}.uploadBtn{display:flex;align-items:center;justify-content:center;min-height:44px;padding:10px 12px;border-radius:10px;background:#1b2a40;border:1px solid var(--line);font-weight:700;cursor:pointer;text-align:center}.secondaryUpload{background:#111d2b}@media(max-width:430px){.uploadChoices{grid-template-columns:1fr}}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
+.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.specGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.specGrid input{padding:10px}.specGood{color:#77e2a9}.specPartial{color:#f5c86b}.fitScore{display:inline-block;font-size:11px;font-weight:800;padding:5px 7px;border-radius:999px;margin-top:6px;background:#16243a}.fitScore.good{background:#12311f;color:#77e2a9}.fitScore.mid{background:#332a13;color:#f5c86b}.fitScore.low{background:#35181d;color:#ffadb7}.matchExact{background:#12311f;color:#77e2a9}.matchLikely{background:#332a13;color:#f5c86b}.matchSimilar{background:#1b2a40;color:#b9c8db}.vehicleTrust{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px}.vehicleTrust input{width:auto}
+.uploadChoices{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.uploadChoices input[type=file]{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}.uploadBtn{display:flex;align-items:center;justify-content:center;min-height:44px;padding:10px 12px;border-radius:10px;background:#1b2a40;border:1px solid var(--line);font-weight:700;cursor:pointer;text-align:center}.secondaryUpload{background:#111d2b}@media(max-width:430px){.uploadChoices{grid-template-columns:1fr}}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.13</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.14</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -66,7 +67,10 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="step">2. Автомобиль</div>
 <div class="row"><div><label>Марка</label><input id="make" placeholder="Например: Volkswagen"></div><div><label>Модель</label><input id="model" placeholder="Например: Touareg"></div></div>
 <div class="row"><div><label>Год</label><input id="year" placeholder="Например: 2015"></div><div><label>Двигатель</label><input id="engine" placeholder="Например: 3.0 TDI"></div></div>
-<label>VIN</label><input id="vin" placeholder="17 символов"><button type="button" class="secondary" id="decodeVin">Заполнить авто по VIN</button><div id="vinStatus" class="muted"></div>
+<label>VIN</label><input id="vin" placeholder="17 символов"><button type="button" class="secondary" id="decodeVin">Заполнить авто по VIN</button>
+<div id="vinStatus" class="muted"></div>
+<label class="vehicleTrust"><input type="checkbox" id="vehicleVerified"> Автомобиль точно известен</label>
+<div class="small muted">Если не уверен в машине — оставь выключенным. Тогда марка/модель используются только как подсказка, а не как фильтр совместимости.</div>
 <label>OEM / артикул детали (если знаешь)</label>
 <input id="manualOem" placeholder="Например: 7P0 498 099">
 <div class="muted">Если номер уже известен, введи его — это надёжнее, чем угадывать по фото.</div>
@@ -107,7 +111,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.13: PartSnap классифицирует eBay-результаты как точные, вероятные, похожие или нерелевантные.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.14: автомобиль может быть подсказкой или подтверждённым фильтром; без VIN PartSnap не делает вид, что знает совместимость.</div>
 </main>
 
 <script>
@@ -140,7 +144,8 @@ $('decodeVin').onclick=async()=>{
     if(j.vehicle?.model)$('model').value=j.vehicle.model;
     if(j.vehicle?.year)$('year').value=j.vehicle.year;
     if(j.vehicle?.engine)$('engine').value=j.vehicle.engine;
-    $('vinStatus').textContent=j.message||'VIN обработан.';
+    if(j.decoded)$('vehicleVerified').checked=true;
+    $('vinStatus').textContent=(j.message||'VIN обработан.')+(j.decoded?' Автомобиль отмечен как подтверждённый.':'');
   }catch(e){
     $('vinStatus').textContent=e.message;
   }
@@ -248,7 +253,10 @@ $('offersBtn').onclick=async()=>{
  }
  const searchOem=(selectedMatch?.oem||resolvedIdentifier||'').trim(); if(!searchOem){alert('Сначала нужен OEM/артикул. Сфотографируй маркировку крупнее или введи номер вручную.');return;} if(!fitmentVerified){
    $('fitmentWarning').classList.remove('hidden');
-   $('fitmentWarning').innerHTML='<b>⚠ Совместимость не подтверждена</b><div>Эти товары найдены по маркировке/артикулу, но PartSnap пока не подтвердил, что они подходят именно к твоему автомобилю. Перед покупкой обязательно проверь применимость.</div>';
+   const vv=$('vehicleVerified')?.checked;
+   $('fitmentWarning').innerHTML=vv
+     ? '<b>⚠ Совместимость ещё не подтверждена каталогом</b><div>Автомобиль указан как известный, но PartSnap пока не имеет официального fitment-каталога. Перед покупкой проверь применимость.</div>'
+     : '<b>ℹ Автомобиль используется только как подсказка</b><div>Ты не подтвердил автомобиль. PartSnap ищет прежде всего по фото, маркировке и типу детали; объявления для других машин могут показываться как детали того же типа.</div>';
  }else{
    $('fitmentWarning').classList.add('hidden');
  } const q=(selectedCandidate?.search_query_en||selectedCandidate?.name||searchOem).trim();
@@ -262,6 +270,7 @@ $('offersBtn').onclick=async()=>{
    +'&model='+encodeURIComponent($('model').value)
    +'&year='+encodeURIComponent($('year').value)
    +'&engine='+encodeURIComponent($('engine').value)
+   +'&vehicle_verified='+encodeURIComponent($('vehicleVerified')?.checked?'true':'false')
    +'&voltage_v='+encodeURIComponent(($('specVoltage')?.value||'').trim())
    +'&capacity_ah='+encodeURIComponent(($('specAh')?.value||'').trim())
    +'&cca_a='+encodeURIComponent(($('specCca')?.value||'').trim());

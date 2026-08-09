@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.13")
+app = FastAPI(title="PartSnap MVP v0.14")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.13",
+        "version": "0.14",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -359,12 +359,14 @@ def _num_or_none(v):
 def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dict):
     """
     Semantic bucket for marketplace results.
-    This does not claim official fitment; it only judges whether the listing
-    appears to be the same type of part the user is looking for.
+
+    If vehicle is verified, another named car is a hard mismatch.
+    If vehicle is not verified, make/model are hints only.
     """
     t = (title or "").lower()
     make = (vehicle.get("make") or "").lower()
     model = (vehicle.get("model") or "").lower()
+    vehicle_verified = bool(vehicle.get("verified"))
     q = (search_query or "").lower()
 
     exact_terms = {
@@ -403,25 +405,39 @@ def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dic
     if model and model in t:
         vehicle_hits += 2
 
+    other_vehicle_terms = [
+        "jeep","wrangler","pajero","mitsubishi","touareg","volvo","s60","passat",
+        "golf","transporter","caravelle","multivan","audi","bmw","mercedes","ford",
+        "toyota","nissan","honda","skoda","seat","peugeot","renault","fiat"
+    ]
+    mentions_other_vehicle = any(v in t for v in other_vehicle_terms)
+    matches_requested_vehicle = bool(vehicle_hits)
+
     q_words = [w for w in _norm_words(q) if len(w) >= 3]
     q_hits = sum(1 for w in q_words if w in t)
 
     if rejected:
-        return {"bucket": "reject", "score": 0, "label": "Не та деталь"}
+        return {"bucket": "reject", "score": 0, "label": "Не та деталь", "vehicle_status": "n/a"}
 
-    if exact and vehicle_hits >= 2:
-        return {"bucket": "exact", "score": 100, "label": "Точное совпадение по типу"}
+    if vehicle_verified and make and model and mentions_other_vehicle and not matches_requested_vehicle:
+        return {"bucket": "reject", "score": 0, "label": "Другая машина", "vehicle_status": "mismatch"}
+
+    if exact and vehicle_verified and vehicle_hits >= 2:
+        return {"bucket": "exact", "score": 100, "label": "Точное совпадение по типу и авто", "vehicle_status": "matched"}
+
     if exact:
-        return {"bucket": "likely", "score": 82 + min(vehicle_hits * 4, 8), "label": "Вероятное совпадение"}
-    if related and vehicle_hits >= 2:
-        return {"bucket": "similar", "score": 55, "label": "Похожая деталь"}
+        if vehicle_verified:
+            return {"bucket": "likely", "score": 82 + min(vehicle_hits * 4, 8), "label": "Вероятное совпадение", "vehicle_status": "unconfirmed"}
+        return {"bucket": "likely", "score": 78, "label": "Та же деталь · авто не подтверждено", "vehicle_status": "hint_only"}
+
     if related:
-        return {"bucket": "similar", "score": 40, "label": "Похожая деталь"}
+        return {"bucket": "similar", "score": 50 if vehicle_hits else 40, "label": "Похожая деталь", "vehicle_status": "hint_only" if not vehicle_verified else "unconfirmed"}
 
     if q_hits >= 2:
-        return {"bucket": "likely", "score": 70, "label": "Вероятное совпадение"}
+        return {"bucket": "likely", "score": 68, "label": "Похоже по описанию · авто не подтверждено" if not vehicle_verified else "Вероятное совпадение", "vehicle_status": "hint_only" if not vehicle_verified else "unconfirmed"}
 
-    return {"bucket": "reject", "score": 10, "label": "Низкая релевантность"}
+    return {"bucket": "reject", "score": 10, "label": "Низкая релевантность", "vehicle_status": "n/a"}
+
 
 def _extract_battery_specs(text: str):
     """Best-effort parser from marketplace title. No invented values."""
@@ -778,7 +794,8 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
     if make: compat.append(f"Make:{make}")
     if model: compat.append(f"Model:{model}")
     if engine: compat.append(f"Engine:{engine}")
-    compatibility_filter = ";".join(compat) if len(compat) >= 2 else ""
+    vehicle_verified = bool(vehicle.get("verified"))
+    compatibility_filter = ";".join(compat) if vehicle_verified and len(compat) >= 2 else ""
 
     eu_countries = ["DE","PL","LT","LV","EE","NL","BE","FR","IT","ES","AT","CZ","SK","SE","FI","DK"]
     attempts = []
@@ -960,7 +977,7 @@ class OvokoSource(MerchantSource):
 SOURCES = [EbaySource(), OvokoSource()]
 
 @app.get("/api/offers/search")
-def offers_search(oem: str, country: str = "LV", postal: str = "", search_query: str = "", part_class: str = "", make: str = "", model: str = "", year: str = "", engine: str = "", voltage_v: str = "", capacity_ah: str = "", cca_a: str = ""):
+def offers_search(oem: str, country: str = "LV", postal: str = "", search_query: str = "", part_class: str = "", make: str = "", model: str = "", year: str = "", engine: str = "", vehicle_verified: bool = False, voltage_v: str = "", capacity_ah: str = "", cca_a: str = ""):
     countries = {c["code"]: c for c in load_json("countries.json")}
     if country not in countries:
         raise HTTPException(400, "Неподдерживаемая страна.")
@@ -1007,7 +1024,7 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         try:
             live = source.search(
                 oem, country, postal, search_query, part_class,
-                {"make":make,"model":model,"year":year,"engine":engine},
+                {"make":make,"model":model,"year":year,"engine":engine,"verified":vehicle_verified},
                 required_specs
             )
             source_status[source.name] = "ok"
@@ -1052,5 +1069,6 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         "source_status": source_status,
         "search_attempts": next((x.get("search_attempts", []) for x in found if x.get("source")=="ebay-live"), []),
         "ebay_diagnostics": _EBAY_DIAGNOSTICS.get((country, oem, search_query, part_class), {}),
-        "required_specs": required_specs
+        "required_specs": required_specs,
+        "vehicle_verified": vehicle_verified
     }
