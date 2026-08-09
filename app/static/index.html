@@ -29,10 +29,10 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 @keyframes a{from{transform:translateX(-100%)}to{transform:translateX(330%)}}
 .kpi{display:flex;gap:8px;margin-top:10px}.kpi>div{flex:1;background:#0f1722;border:1px solid var(--line);border-radius:12px;padding:10px}
 .kpi b{display:block;font-size:16px}.kpi span{font-size:11px;color:var(--muted)}
-.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.specGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.specGrid input{padding:10px}.specGood{color:#77e2a9}.specPartial{color:#f5c86b}.fitScore{display:inline-block;font-size:11px;font-weight:800;padding:5px 7px;border-radius:999px;margin-top:6px;background:#16243a}.fitScore.good{background:#12311f;color:#77e2a9}.fitScore.mid{background:#332a13;color:#f5c86b}.fitScore.low{background:#35181d;color:#ffadb7}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
+.errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.specGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.specGrid input{padding:10px}.specGood{color:#77e2a9}.specPartial{color:#f5c86b}.fitScore{display:inline-block;font-size:11px;font-weight:800;padding:5px 7px;border-radius:999px;margin-top:6px;background:#16243a}.fitScore.good{background:#12311f;color:#77e2a9}.fitScore.mid{background:#332a13;color:#f5c86b}.fitScore.low{background:#35181d;color:#ffadb7}.uploadChoices{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.uploadChoices input[type=file]{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}.uploadBtn{display:flex;align-items:center;justify-content:center;min-height:44px;padding:10px 12px;border-radius:10px;background:#1b2a40;border:1px solid var(--line);font-weight:700;cursor:pointer;text-align:center}.secondaryUpload{background:#111d2b}@media(max-width:430px){.uploadChoices{grid-template-columns:1fr}}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.12</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.12.2</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -54,7 +54,12 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="card">
 <div class="step">1. Фото детали</div>
 <div id="photoEmpty" class="photo" style="display:grid;place-items:center;text-align:center;padding:24px;color:var(--muted)">📷<br><br>Сфотографируй деталь<br>или выбери фото</div><img id="preview" class="photo hidden" alt="Фото детали">
-<label>Снять/выбрать фото</label><input id="file" type="file" accept="image/*" capture="environment">
+<label>Снять/выбрать фото</label><div class="uploadChoices">
+  <label class="uploadBtn" for="file">Выбрать из галереи</label>
+  <input id="file" type="file" accept="image/*">
+  <label class="uploadBtn secondaryUpload" for="cameraFile">Сфотографировать</label>
+  <input id="cameraFile" type="file" accept="image/*" capture="environment">
+</div>
 </div>
 
 <div class="card">
@@ -102,15 +107,15 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.12: рейтинг совместимости по характеристикам + сортировка сначала по fit score, потом по итоговой цене.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.12.2: на телефоне можно отдельно выбрать фото из галереи или открыть камеру.</div>
 </main>
 
 <script>
 let selectedFile=null,selectedCandidate=null,selectedMatch=null;
 const $=id=>document.getElementById(id);
 
-$('file').addEventListener('change',e=>{
-  selectedFile=e.target.files[0]||null;
+function handleSelectedImage(input){
+  selectedFile=input.files[0]||null;
   if(selectedFile){
     $('preview').src=URL.createObjectURL(selectedFile);
     $('preview').classList.remove('hidden');
@@ -119,7 +124,9 @@ $('file').addEventListener('change',e=>{
     $('preview').classList.add('hidden');
     $('photoEmpty').classList.remove('hidden');
   }
-});
+}
+$('file').addEventListener('change',e=>handleSelectedImage(e.target));
+$('cameraFile').addEventListener('change',e=>handleSelectedImage(e.target));
 
 
 $('decodeVin').onclick=async()=>{
@@ -255,11 +262,14 @@ $('offersBtn').onclick=async()=>{
    +'&model='+encodeURIComponent($('model').value)
    +'&year='+encodeURIComponent($('year').value)
    +'&engine='+encodeURIComponent($('engine').value)
-   +'&voltage_v='+encodeURIComponent($('specVoltage')?.value||'')
-   +'&capacity_ah='+encodeURIComponent($('specAh')?.value||'')
-   +'&cca_a='+encodeURIComponent($('specCca')?.value||'');
+   +'&voltage_v='+encodeURIComponent(($('specVoltage')?.value||'').trim())
+   +'&capacity_ah='+encodeURIComponent(($('specAh')?.value||'').trim())
+   +'&cca_a='+encodeURIComponent(($('specCca')?.value||'').trim());
  const r=await fetch(url);const j=await r.json();
+ const rs=j.required_specs||{};
  $('chosen').textContent=`${selectedMatch.part_name} · ${selectedMatch.oem} · доставка в ${j.destination.name}`;
+ const sourceSpecs=[rs.voltage_v?rs.voltage_v+'V':'',rs.capacity_ah?rs.capacity_ah+'Ah':'',rs.cca_a?rs.cca_a+'A CCA':''].filter(Boolean).join(' · ');
+ if(sourceSpecs)$('chosen').textContent+=' · сравниваем с '+sourceSpecs;
  const list=$('offersList');list.innerHTML='';
  (j.offers||[]).forEach((o,i)=>{
    const d=document.createElement('div');d.className='offer';
@@ -270,7 +280,7 @@ $('offersBtn').onclick=async()=>{
    const specTxt=(os.voltage_v||os.capacity_ah||os.cca_a)?[os.voltage_v?os.voltage_v+'V':'',os.capacity_ah?os.capacity_ah+'Ah':'',os.cca_a?os.cca_a+'A CCA':''].filter(Boolean).join(' · '):'';
    const fitScore=(typeof sm.score==='number')?sm.score:null;
    const fitClass=fitScore===null?'':(fitScore>=90?'good':(fitScore>=70?'mid':'low'));
-   const fitText=fitScore===null?'Характеристики не указаны':'Совпадение характеристик '+fitScore+'%';
+   const fitText=fitScore===null?'В объявлении мало данных для сравнения':'Совпадение характеристик '+fitScore+'%';
    d.innerHTML=`<div class="offerTop">${o.image_url?'<img class="offerImg" src="'+o.image_url+'" alt="">':'<div class="offerImg"></div>'}<div><div class="offerTitle">${o.title||o.merchant}</div><div class="merchantMeta">${o.merchant} · ${o.country} · ${o.type}</div>${specTxt?'<div class="merchantMeta">'+specTxt+'</div>':''}<span class="badge">${o.local?'локальный':(o.eu_seller?'ЕС':'вне ЕС')}</span>${o.import_fee>0?'<span class="badge">импорт</span>':''}<span class="fitScore ${fitClass}">${fitText}</span>${compatTxt?'<span class="compatBadge">'+compatTxt+'</span>':''}</div><div><div class="price ${i===0?'best':''}">€${o.total.toFixed(2)}</div><div class="breakdown">товар €${o.item_price.toFixed(2)} + доставка €${o.shipping.toFixed(2)}${importText}</div></div></div>`;
    if(o.url){const a=document.createElement('a');a.className='buyLink';a.href=o.url;a.target='_blank';a.rel='noopener';a.textContent='Открыть у продавца →';d.appendChild(a);}
    list.appendChild(d);

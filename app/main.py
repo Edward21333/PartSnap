@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.12")
+app = FastAPI(title="PartSnap MVP v0.12.2")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.12",
+        "version": "0.12.2",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -832,6 +832,11 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         raise HTTPException(400, "Неподдерживаемая страна.")
     dest = countries[country]
     offers = load_json("offers_demo.json")
+    required_specs = {
+        "voltage_v": (voltage_v or "").strip(),
+        "capacity_ah": (capacity_ah or "").strip(),
+        "cca_a": (cca_a or "").strip(),
+    }
 
     norm = oem.lower().strip()
     found=[]
@@ -869,7 +874,7 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
             live = source.search(
                 oem, country, postal, search_query, part_class,
                 {"make":make,"model":model,"year":year,"engine":engine},
-                {"voltage_v": voltage_v, "capacity_ah": capacity_ah, "cca_a": cca_a}
+                required_specs
             )
             source_status[source.name] = "ok"
             if live:
@@ -879,10 +884,15 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
             source_status[source.name] = "error"
 
     def global_rank(x):
+        sm = x.get("spec_match") or {}
+        score = sm.get("score")
+        known_fit = 0 if isinstance(score, (int, float)) else 1
+        fit_score = -(score if isinstance(score, (int, float)) else 0)
         cm = x.get("compatibility_match","")
         cr = {"EXACT":0,"POSSIBLE":1,"":2}.get(cm,3)
+        eu = 0 if x.get("eu_seller") else 1
         rel = -int(x.get("relevance_score",0))
-        return (cr, rel, x["total"], 0 if x.get("local") else 1)
+        return (eu, known_fit, fit_score, cr, rel, x["total"])
     found.sort(key=global_rank)
     return {
         "destination": dest,
@@ -892,5 +902,6 @@ def offers_search(oem: str, country: str = "LV", postal: str = "", search_query:
         "live_sources": live_sources,
         "source_status": source_status,
         "search_attempts": next((x.get("search_attempts", []) for x in found if x.get("source")=="ebay-live"), []),
-        "ebay_diagnostics": _EBAY_DIAGNOSTICS.get((country, oem, search_query, part_class), {})
+        "ebay_diagnostics": _EBAY_DIAGNOSTICS.get((country, oem, search_query, part_class), {}),
+        "required_specs": required_specs
     }
