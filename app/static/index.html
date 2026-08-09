@@ -32,7 +32,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 .errorBox{background:#2a1518;border:1px solid #6f2a31;color:#ffd7dc;padding:12px;border-radius:12px;margin-top:10px;font-size:13px}.compat{padding:12px;border:1px solid var(--line);border-radius:13px;margin-top:10px}.compat.warn{border-color:#6c5420;background:#211b10}.compat.good{border-color:#245f45;background:#10231a}.compat b{display:block;margin-bottom:5px}.specGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}.specGrid input{padding:10px}.specGood{color:#77e2a9}.specPartial{color:#f5c86b}.fitScore{display:inline-block;font-size:11px;font-weight:800;padding:5px 7px;border-radius:999px;margin-top:6px;background:#16243a}.fitScore.good{background:#12311f;color:#77e2a9}.fitScore.mid{background:#332a13;color:#f5c86b}.fitScore.low{background:#35181d;color:#ffadb7}.uploadChoices{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.uploadChoices input[type=file]{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}.uploadBtn{display:flex;align-items:center;justify-content:center;min-height:44px;padding:10px 12px;border-radius:10px;background:#1b2a40;border:1px solid var(--line);font-weight:700;cursor:pointer;text-align:center}.secondaryUpload{background:#111d2b}@media(max-width:430px){.uploadChoices{grid-template-columns:1fr}}.buyLink{display:inline-block;margin-top:8px;padding:8px 10px;border-radius:9px;background:#1b2a40;color:#bcd4ff;text-decoration:none;font-size:12px;font-weight:700}.note{font-size:11px;color:#73859a;text-align:center;margin-top:18px;line-height:1.45}
 </style></head>
 <body><main>
-<header><h1>PartSnap</h1><div class="pill">MVP v0.12.3</div></header>
+<header><h1>PartSnap</h1><div class="pill">MVP v0.12.4</div></header>
 
 <div class="card">
 <div class="step">0. Куда доставлять</div>
@@ -107,7 +107,7 @@ button{width:100%;padding:14px;border:0;border-radius:13px;font-weight:800;font-
 <div class="status demo">Demo merchants. Логика региона уже настоящая: недоступные страны отбрасываются, доставка и demo-импортные расходы входят в итоговую цену.</div>
 </div>
 
-<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.12.3: рейтинг характеристик показывается только там, где PartSnap реально умеет их сравнивать.</div>
+<div id="errorBox" class="errorBox hidden"></div><div class="note">v0.12.4: подробная диагностика eBay + устойчивый fallback для ШРУСов и других деталей.</div>
 </main>
 
 <script>
@@ -297,7 +297,7 @@ $('offersBtn').onclick=async()=>{
    const diag=j.ebay_diagnostics||{};
    const attempts=(j.search_attempts?.length?j.search_attempts:(diag.attempts||[]));
    if(attempts.length){
-      parts.push('Попытки eBay: '+attempts.map(x=>x.mode+'='+x.count).join(', ')+'.');
+      parts.push('Попытки eBay: '+attempts.map(x=>(x.query?('['+x.query+'] '):'')+x.mode+'='+x.count+(x.error?' error':'')).join('; ')+'.');
    }
    if(diag.query_used) parts.push('Запрос: "'+diag.query_used+'".');
    if(diag.part_class_used) parts.push('Класс: '+diag.part_class_used+'.');

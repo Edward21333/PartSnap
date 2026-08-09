@@ -9,7 +9,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.12.3")
+app = FastAPI(title="PartSnap MVP v0.12.4")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -31,7 +31,7 @@ def root():
 def health():
     return {
         "ok": True,
-        "version": "0.12.3",
+        "version": "0.12.4",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -605,6 +605,47 @@ def _ebay_category_for_part(part_class: str):
         "battery": "179846",   # Batterien fürs Auto
     }.get(part_class, "")
 
+
+def _log_ebay_error(mode: str, q: str, category_id: str, compatibility_filter: str, exc):
+    try:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        body = getattr(getattr(exc, "response", None), "text", "")
+        print("EBAY ERROR")
+        print(f"mode={mode}")
+        print(f"status={status}")
+        print(f"query={q}")
+        print(f"category_id={category_id}")
+        print(f"compatibility_filter={compatibility_filter}")
+        if body:
+            print(f"response={body[:3000]}")
+        else:
+            print(f"exception={exc}")
+    except Exception:
+        pass
+
+def _query_variants(oem: str, search_query: str, part_class: str):
+    variants = []
+    def add(v):
+        v = (v or "").strip()
+        if v and v not in variants:
+            variants.append(v)
+
+    add(search_query)
+    add(oem)
+    add((oem or "").replace(" ", ""))
+
+    if part_class == "cv_joint":
+        add("outer CV joint")
+        add("Rzeppa outer CV joint")
+        add("VW Touareg outer CV joint")
+    elif part_class == "battery":
+        add(f"{oem} Autobatterie".strip())
+        add(f"{oem} car battery".strip())
+    else:
+        add(f"{oem} auto part".strip())
+
+    return variants[:5]
+
 def _ebay_request(token, marketplace, country, postal, q, category_id="", compatibility_filter="", seller_countries=None, limit=50):
     import requests
     params = {"q": q, "limit": limit}
@@ -654,7 +695,8 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
         inferred_class = _infer_part_class(oem)
     part_class = inferred_class
 
-    q = _build_ebay_query(oem, search_query, part_class)
+    base_q = _build_ebay_query(oem, search_query, part_class)
+    query_variants = _query_variants(oem, base_q, part_class)
     precise_category = _ebay_category_for_part(part_class)
     broad_category = "6030"
 
@@ -682,32 +724,41 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
 
     collected = {}
     attempt_log = []
+    successful_query = ""
 
-    for mode, category_id, compat_filter, seller_countries in attempts:
-        try:
-            items = _ebay_request(
-                token=token,
-                marketplace=marketplace,
-                country=country,
-                postal=postal,
-                q=q,
-                category_id=category_id,
-                compatibility_filter=compat_filter,
-                seller_countries=seller_countries,
-                limit=50,
-            )
-            attempt_log.append({"mode": mode, "count": len(items)})
-        except Exception:
-            attempt_log.append({"mode": mode, "count": 0, "error": True})
-            continue
+    stop_search = False
+    for q in query_variants:
+        for mode, category_id, compat_filter, seller_countries in attempts:
+            try:
+                items = _ebay_request(
+                    token=token,
+                    marketplace=marketplace,
+                    country=country,
+                    postal=postal,
+                    q=q,
+                    category_id=category_id,
+                    compatibility_filter=compat_filter,
+                    seller_countries=seller_countries,
+                    limit=50,
+                )
+                attempt_log.append({"mode": mode, "query": q, "count": len(items)})
+            except Exception as exc:
+                _log_ebay_error(mode, q, category_id, compat_filter, exc)
+                attempt_log.append({"mode": mode, "query": q, "count": 0, "error": True})
+                continue
 
-        for item in items:
-            iid = item.get("itemId") or item.get("legacyItemId") or item.get("itemWebUrl") or item.get("title")
-            if iid and iid not in collected:
-                collected[iid] = item
+            if items and not successful_query:
+                successful_query = q
 
-        # If precise search already yields enough candidates, don't broaden immediately.
-        if mode.startswith("precise") and len(collected) >= 10:
+            for item in items:
+                iid = item.get("itemId") or item.get("legacyItemId") or item.get("itemWebUrl") or item.get("title")
+                if iid and iid not in collected:
+                    collected[iid] = item
+
+            if mode.startswith("precise") and len(collected) >= 10:
+                stop_search = True
+                break
+        if stop_search or len(collected) >= 20:
             break
 
     out = []
@@ -723,9 +774,9 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             continue
 
         title = item.get("title", "")
-        relevance = _relevance_score(title, q, part_class)
+        relevance = _relevance_score(title, successful_query or base_q, part_class)
 
-        query_models = _extract_model_tokens(q)
+        query_models = _extract_model_tokens(successful_query or base_q)
         title_upper = title.upper()
         if query_models and not all(m in title_upper for m in query_models):
             # Exact model code requested (e.g. S4) -> drop different Bosch batteries.
@@ -770,7 +821,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
             "compatibility_match":compat_match,
             "compatibility_properties":compat_props,
             "search_attempts": attempt_log,
-            "search_query_used": q,
+            "search_query_used": successful_query or base_q,
             "part_class_used": part_class,
             "offered_specs": offered_specs,
             "spec_match": spec_match,
@@ -792,7 +843,7 @@ def ebay_search(oem: str, country: str, postal: str = "", search_query: str = ""
     ))
     _EBAY_DIAGNOSTICS[(country, oem, search_query, part_class)] = {
         "attempts": attempt_log,
-        "query_used": q,
+        "query_used": successful_query or base_q,
         "part_class_used": part_class,
             "offered_specs": offered_specs,
             "spec_match": spec_match,
