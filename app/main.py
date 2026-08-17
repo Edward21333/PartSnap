@@ -1,4 +1,5 @@
-import os, json, base64, re
+import os
+import json, json, base64, re
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -9,7 +10,7 @@ BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
 DATA = BASE / "data"
 
-app = FastAPI(title="PartSnap MVP v0.20.1")
+app = FastAPI(title="PartSnap MVP v0.21")
 
 def api_error(code: str, message: str, retryable: bool = False, status: int = 500):
     from fastapi.responses import JSONResponse
@@ -29,13 +30,21 @@ def root():
 
 @app.get("/api/vehicles")
 def vehicle_catalog():
-    return load_json("vehicle_catalog.json")
+    from pathlib import Path
+    catalog_path = Path(__file__).resolve().parent / "vehicle_catalog.json"
+    try:
+        with catalog_path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        print(f"VEHICLE CATALOG ERROR: {exc}")
+        raise HTTPException(status_code=500, detail="Не удалось загрузить каталог автомобилей")
+
 
 @app.get("/api/health")
 def health():
     return {
         "ok": True,
-        "version": "0.20.1",
+        "version": "0.21",
         "ai_enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
         "regional_pricing": True
     }
@@ -361,7 +370,7 @@ def _num_or_none(v):
 
 
 def _classify_offer(title: str, part_class: str, search_query: str, vehicle: dict):
-    """Semantic marketplace classifier v0.20.1."""
+    """Semantic marketplace classifier v0.21."""
     t = " ".join((title or "").lower().replace("-", " ").replace("/", " ").split())
     make=(vehicle.get("make") or "").lower().strip()
     model=(vehicle.get("model") or "").lower().strip()
